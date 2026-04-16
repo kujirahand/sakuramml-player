@@ -12,58 +12,58 @@
  * 5. シークは stopAllChunks() → seek_to() → pumpChunks() のリセット
  */
 
-import init, { MidiPlayer, load_soundfont, compile_mml } from './pkg/sakuramml_player.js';
+import init, { MidiPlayer, load_soundfont, compile_mml, encoding_to_utf8 } from './pkg/sakuramml_player.js?v=2';
 
 // ─────────────────────────────────────────────────────────
 // 定数
 // ─────────────────────────────────────────────────────────
 
-const SAMPLE_RATE      = 44100;
-const CHUNK_SEC        = 10;                     // 1 チャンクの長さ (秒)
-const CHUNK_FRAMES     = SAMPLE_RATE * CHUNK_SEC; // = 441 000 サンプル
+const SAMPLE_RATE = 44100;
+const CHUNK_SEC = 10;                     // 1 チャンクの長さ (秒)
+const CHUNK_FRAMES = SAMPLE_RATE * CHUNK_SEC; // = 441 000 サンプル
 const BUFFER_AHEAD_SEC = 25;                     // 先読みバッファ量 (秒)
 const SCHEDULE_LATENCY = 0.04;                   // 再生開始までの最小遅延 (秒)
 
-const PIANO_W      = 64;
-const RULER_H      = 24;
-const NOTE_MIN_W   = 2;
+const PIANO_W = 64;
+const RULER_H = 24;
+const NOTE_MIN_W = 2;
 
 const CHANNEL_COLORS = [
-  '#6366f1','#8b5cf6','#ec4899','#ef4444',
-  '#f97316','#eab308','#22c55e','#14b8a6',
-  '#06b6d4','#3b82f6','#a855f7','#f43f5e',
-  '#84cc16','#f59e0b','#10b981','#0ea5e9',
+  '#6366f1', '#8b5cf6', '#ec4899', '#ef4444',
+  '#f97316', '#eab308', '#22c55e', '#14b8a6',
+  '#06b6d4', '#3b82f6', '#a855f7', '#f43f5e',
+  '#84cc16', '#f59e0b', '#10b981', '#0ea5e9',
 ];
-const BLACK_SEMITONES = new Set([1,3,6,8,10]);
+const BLACK_SEMITONES = new Set([1, 3, 6, 8, 10]);
 
 // ─────────────────────────────────────────────────────────
 // プレイバック状態
 // ─────────────────────────────────────────────────────────
 
-let player      = null;
-let audioCtx    = null;
-let gainNode    = null;
+let player = null;
+let audioCtx = null;
+let gainNode = null;
 
 // --- ストリーミング状態 ---
-let isPlaying         = false;
-let playStartAcTime   = 0;    // AudioContext 時刻: この時点が playStartSec 秒
-let playStartSec      = 0;    // 再生開始時の曲位置 (秒)
-let pauseTime         = 0;    // 一時停止位置 (秒)
+let isPlaying = false;
+let playStartAcTime = 0;    // AudioContext 時刻: この時点が playStartSec 秒
+let playStartSec = 0;    // 再生開始時の曲位置 (秒)
+let pauseTime = 0;    // 一時停止位置 (秒)
 
 /** スケジュール済みチャンクノードの配列 { src, endAcTime } */
-let chunkNodes        = [];
+let chunkNodes = [];
 /** 次のチャンクをスケジュールする AudioContext 時刻 */
-let scheduledUpTo     = 0;
+let scheduledUpTo = 0;
 /** Rust側が全サンプルを出力済みか */
-let renderComplete    = false;
+let renderComplete = false;
 
 // --- ピアノロール状態 ---
-let notes      = [];
-let beats      = [];
-let duration   = 0;
+let notes = [];
+let beats = [];
+let duration = 0;
 let noteHeight = 8;
-let pps        = 120;   // pixels per second
-let scrollX    = 0;
+let pps = 120;   // pixels per second
+let scrollX = 0;
 let scrollNote = 0;
 let logW = 0, logH = 0;
 let animId = null;
@@ -72,26 +72,26 @@ let animId = null;
 // DOM
 // ─────────────────────────────────────────────────────────
 
-const canvas       = document.getElementById('piano-roll');
-const ctx2d        = canvas.getContext('2d');
-const fileInput    = document.getElementById('file-input');
-const playBtn      = document.getElementById('play-btn');
-const stopBtn      = document.getElementById('stop-btn');
-const seekBar      = document.getElementById('seek-bar');
-const seekFill     = document.getElementById('seek-fill');
-const curTimeEl    = document.getElementById('current-time');
-const totTimeEl    = document.getElementById('total-time');
-const statusEl     = document.getElementById('status');
-const zoomInBtn    = document.getElementById('zoom-in');
-const zoomOutBtn   = document.getElementById('zoom-out');
-const zoomLabelEl  = document.getElementById('zoom-label');
+const canvas = document.getElementById('piano-roll');
+const ctx2d = canvas.getContext('2d');
+const fileInput = document.getElementById('file-input');
+const playBtn = document.getElementById('play-btn');
+const stopBtn = document.getElementById('stop-btn');
+const seekBar = document.getElementById('seek-bar');
+const seekFill = document.getElementById('seek-fill');
+const curTimeEl = document.getElementById('current-time');
+const totTimeEl = document.getElementById('total-time');
+const statusEl = document.getElementById('status');
+const zoomInBtn = document.getElementById('zoom-in');
+const zoomOutBtn = document.getElementById('zoom-out');
+const zoomLabelEl = document.getElementById('zoom-label');
 const volumeSlider = document.getElementById('volume');
-const dropOverlay  = document.getElementById('drop-overlay');
-const rollContainer= document.getElementById('roll-container');
+const dropOverlay = document.getElementById('drop-overlay');
+const rollContainer = document.getElementById('roll-container');
 
 // MML エディタ
-const mmlInput     = document.getElementById('mml-input');
-const compileBtn   = document.getElementById('compile-btn');
+const mmlInput = document.getElementById('mml-input');
+const compileBtn = document.getElementById('compile-btn');
 
 // ─────────────────────────────────────────────────────────
 // 初期化
@@ -101,18 +101,18 @@ async function main() {
   setStatus('Wasm 初期化中…');
   try {
     await init();
-    
+
     setStatus('サウンドフォントをロード中…');
-    const response = await fetch('/fonts/TimGM6mb.sf2');
+    const response = await fetch('./fonts/TimGM6mb.sf2');
     if (!response.ok) {
-        throw new Error(`Failed to fetch soundfont: ${response.statusText}`);
+      throw new Error(`Failed to fetch soundfont: ${response.statusText}`);
     }
     const sf2Data = await response.arrayBuffer();
     load_soundfont(new Uint8Array(sf2Data));
 
     player = new MidiPlayer(SAMPLE_RATE);
-    setStatus('MIDIファイルをここにドロップ、または「開く」ボタンで選択', 'ok');
-  } catch(e) {
+    setStatus('ファイルをキャンバスにドロップしてください', 'ok');
+  } catch (e) {
     setStatus('初期化失敗: ' + e.message, 'err');
     console.error(e);
     return;
@@ -128,14 +128,16 @@ async function main() {
 
 function setupEvents() {
   fileInput.addEventListener('change', e => {
-    const f = e.target.files[0]; if (f) loadFile(f);
+    const f = e.target.files[0];
+    console.log('[FileInput] File selected:', f ? f.name : 'null');
+    if (f) loadFile(f);
   });
   playBtn.addEventListener('click', togglePlay);
   stopBtn.addEventListener('click', stopPlayback);
-  zoomInBtn .addEventListener('click', () => zoomAround(1.4));
-  zoomOutBtn.addEventListener('click', () => zoomAround(1/1.4));
+  zoomInBtn.addEventListener('click', () => zoomAround(1.4));
+  zoomOutBtn.addEventListener('click', () => zoomAround(1 / 1.4));
 
-  seekBar.addEventListener('input',  onSeekInput);
+  seekBar.addEventListener('input', onSeekInput);
   seekBar.addEventListener('change', onSeekChange);
 
   volumeSlider.addEventListener('input', () => {
@@ -184,7 +186,15 @@ function setupEvents() {
   rollContainer.addEventListener('drop', e => {
     e.preventDefault(); dropOverlay.classList.remove('active');
     const f = e.dataTransfer.files[0];
-    if (f && /\.midi?$/i.test(f.name)) loadFile(f);
+    console.log('[DropEvent] Dropped file:', f ? f.name : 'null');
+    if (f) {
+      if (/\.(midi?|mml)$/i.test(f.name)) {
+        console.log('[DropEvent] File matched extension. Calling loadFile');
+        loadFile(f);
+      } else {
+        console.log('[DropEvent] File extension did not match:', f.name);
+      }
+    }
   });
 
   window.addEventListener('resize', () => { resizeCanvas(); drawFrame(getCurrentTime()); });
@@ -215,7 +225,7 @@ function onCompileMml() {
       } else {
         throw new Error("コンパイルに失敗しました。");
       }
-    } catch(e) {
+    } catch (e) {
       showLoading(false);
       setStatus('コンパイルエラー: ' + (e.message ?? e), 'err');
       console.error(e);
@@ -228,27 +238,53 @@ function onCompileMml() {
 // ─────────────────────────────────────────────────────────
 
 async function loadFile(file) {
-  showLoading(true, 'MIDIを解析中…');
+  console.log('[loadFile] Start loading file:', file.name);
+  const isMml = /\.mml$/i.test(file.name);
+  console.log('[loadFile] Is MML format?', isMml);
+  showLoading(true, isMml ? 'MMLをコンパイル中…' : 'MIDIを解析中…');
   setStatus(`読み込み中: ${file.name}`);
   stopPlayback();
 
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    loadMidiBytes(bytes, file.name);
-  } catch(e) {
+    if (isMml) {
+      console.log('[loadFile] Reading MML file as ArrayBuffer for encoding_to_utf8');
+      const fileBytes = new Uint8Array(await file.arrayBuffer());
+      const text = encoding_to_utf8(fileBytes);
+      console.log('[loadFile] Text read length:', text.length);
+      mmlInput.value = text;
+      console.log('[loadFile] Calling compile_mml');
+      const bytes = compile_mml(text);
+      console.log('[loadFile] compile_mml generated bytes length:', bytes ? bytes.length : 0);
+      if (bytes && bytes.length > 0) {
+        console.log('[loadFile] Calling loadMidiBytes');
+        loadMidiBytes(bytes, file.name);
+      } else {
+         console.warn('[loadFile] compile_mml failed or retured empty');
+        throw new Error("コンパイルに失敗しました。");
+      }
+    } else {
+      console.log('[loadFile] Reading MIDI file as ArrayBuffer');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      console.log('[loadFile] ArrayBuffer read length:', bytes.length);
+      loadMidiBytes(bytes, file.name);
+    }
+  } catch (e) {
     showLoading(false);
     setStatus('エラー: ' + (e.message ?? e), 'err');
-    console.error(e);
+    console.error('[loadFile] Error:', e);
   }
 }
 
 function loadMidiBytes(bytes, title) {
+  console.log('[loadMidiBytes] title:', title, 'bytes length:', bytes.length);
   try {
     // Rust/Wasm で MIDI 解析 & イベントリスト構築
+    console.log('[loadMidiBytes] Calling player.load()');
     const json = player.load(bytes);
+    console.log('[loadMidiBytes] player.load() success');
     const data = JSON.parse(json);
-    notes    = data.notes;
-    beats    = data.beats;
+    notes = data.notes;
+    beats = data.beats;
     duration = player.get_duration();
 
     totTimeEl.textContent = fmtTime(duration);
@@ -278,13 +314,13 @@ function loadMidiBytes(bytes, title) {
     playBtn.disabled = false;
     stopBtn.disabled = false;
     drawFrame(0);
-    
+
     // Auto Play (optional, maybe nice for MML input)
-    if (title === 'MML') {
+    if (title === 'MML' || /\.mml$/i.test(title)) {
       startPlayback(0);
     }
 
-  } catch(e) {
+  } catch (e) {
     showLoading(false);
     setStatus('エラー: ' + (e.message ?? e), 'err');
     console.error(e);
@@ -323,9 +359,9 @@ function startPlayback(fromSec = 0) {
   player.seek_to(fromSec);
   renderComplete = player.is_render_done();
 
-  playStartSec    = fromSec;
+  playStartSec = fromSec;
   playStartAcTime = audioCtx.currentTime + SCHEDULE_LATENCY;
-  scheduledUpTo   = playStartAcTime;
+  scheduledUpTo = playStartAcTime;
 
   isPlaying = true;
   playBtn.textContent = '⏸';
@@ -360,10 +396,10 @@ function stopPlayback() {
 /** スケジュール済みの全 AudioBufferSourceNode を即停止して解放する */
 function stopAllChunks() {
   for (const { src } of chunkNodes) {
-    try { src.stop(); } catch(_) {}
+    try { src.stop(); } catch (_) { }
     src.disconnect();
   }
-  chunkNodes    = [];
+  chunkNodes = [];
   renderComplete = false;
 }
 
@@ -456,7 +492,7 @@ function onWheel(e) {
   const ct = getCurrentTime();
   if (e.ctrlKey || e.metaKey) {
     const rect = canvas.getBoundingClientRect();
-    const mx   = e.clientX - rect.left;
+    const mx = e.clientX - rect.left;
     const timeAtMouse = (mx - PIANO_W + scrollX) / pps;
     pps = Math.max(20, Math.min(2000, pps * (e.deltaY < 0 ? 1.12 : 0.89)));
     scrollX = Math.max(0, pps * timeAtMouse - (mx - PIANO_W));
@@ -482,8 +518,8 @@ function animate() {
   curTimeEl.textContent = fmtTime(ct);
 
   // 再生ヘッドが右端 70% を超えたら自動スクロール
-  const headX  = PIANO_W + ct * pps - scrollX;
-  const rollW  = logW - PIANO_W;
+  const headX = PIANO_W + ct * pps - scrollX;
+  const rollW = logW - PIANO_W;
   if (headX > PIANO_W + rollW * 0.72) {
     scrollX = Math.max(0, ct * pps - rollW * 0.28);
   }
@@ -502,11 +538,11 @@ function animate() {
 // ─────────────────────────────────────────────────────────
 
 function resizeCanvas() {
-  const dpr  = window.devicePixelRatio || 1;
+  const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   logW = rect.width;
   logH = rect.height;
-  canvas.width  = logW * dpr;
+  canvas.width = logW * dpr;
   canvas.height = logH * dpr;
   ctx2d.scale(dpr, dpr);
 }
@@ -522,17 +558,17 @@ function drawFrame(ct) {
   ctx2d.fillStyle = '#07071a';
   ctx2d.fillRect(0, 0, W, H);
 
-  const rollH    = H - RULER_H;
+  const rollH = H - RULER_H;
   const visNotes = Math.floor(rollH / noteHeight);
 
   if (notes.length === 0) { drawEmpty(W, H); return; }
 
-  drawGrid      (W, H, visNotes);
-  drawBeatLines (W, H);
-  drawPianoKeys (H, visNotes);
-  drawTimeRuler (W);
-  drawNotes     (W, H, visNotes, ct);
-  drawPlayhead  (H, ct);
+  drawGrid(W, H, visNotes);
+  drawBeatLines(W, H);
+  drawPianoKeys(H, visNotes);
+  drawTimeRuler(W);
+  drawNotes(W, H, visNotes, ct);
+  drawPlayhead(H, ct);
 }
 
 function drawEmpty(W, H) {
@@ -540,13 +576,13 @@ function drawEmpty(W, H) {
   ctx2d.font = '500 16px Inter, sans-serif';
   ctx2d.textAlign = 'center';
   ctx2d.textBaseline = 'middle';
-  ctx2d.fillText('🌸  MIDI ファイルをドロップするか「開く」で選択', W / 2, H / 2);
+  ctx2d.fillText('🌸  MIDI / MML ファイルをドロップするか「開く」で選択', W / 2, H / 2);
 }
 
 function drawGrid(W, H, visNotes) {
   for (let i = 0; i < visNotes; i++) {
     const note = scrollNote + i;
-    const y    = noteToY(note, H);
+    const y = noteToY(note, H);
     if (isBlack(note)) {
       ctx2d.fillStyle = 'rgba(0,0,0,0.22)';
       ctx2d.fillRect(PIANO_W, y, W - PIANO_W, noteHeight);
@@ -563,7 +599,7 @@ function drawGrid(W, H, visNotes) {
 
 function drawBeatLines(W, H) {
   const startSec = scrollX / pps;
-  const endSec   = (scrollX + W - PIANO_W) / pps;
+  const endSec = (scrollX + W - PIANO_W) / pps;
 
   for (const b of beats) {
     if (b.time < startSec || b.time > endSec) continue;
@@ -589,8 +625,8 @@ function drawBeatLines(W, H) {
 function drawPianoKeys(H, visNotes) {
   for (let i = 0; i < visNotes; i++) {
     const note = scrollNote + i;
-    const y    = noteToY(note, H);
-    const blk  = isBlack(note);
+    const y = noteToY(note, H);
+    const blk = isBlack(note);
     ctx2d.fillStyle = blk ? '#0b0b20' : '#131328';
     ctx2d.fillRect(0, y, PIANO_W, noteHeight);
     if (!blk) {
@@ -619,15 +655,15 @@ function drawTimeRuler(W) {
   ctx2d.beginPath(); ctx2d.moveTo(0, RULER_H); ctx2d.lineTo(W, RULER_H); ctx2d.stroke();
 
   let interval = 1;
-  if      (pps < 30)  interval = 30;
-  else if (pps < 60)  interval = 10;
+  if (pps < 30) interval = 30;
+  else if (pps < 60) interval = 10;
   else if (pps < 120) interval = 5;
   else if (pps < 300) interval = 2;
   else if (pps > 600) interval = 0.5;
 
   const startSec = scrollX / pps;
-  const endSec   = (scrollX + W - PIANO_W) / pps;
-  const first    = Math.ceil(startSec / interval) * interval;
+  const endSec = (scrollX + W - PIANO_W) / pps;
+  const first = Math.ceil(startSec / interval) * interval;
 
   ctx2d.fillStyle = '#6070a0'; ctx2d.font = '10px Inter, monospace';
   ctx2d.textAlign = 'center'; ctx2d.textBaseline = 'top';
@@ -644,17 +680,17 @@ function drawTimeRuler(W) {
 
 function drawNotes(W, H, visNotes, ct) {
   const startSec = scrollX / pps;
-  const endSec   = (scrollX + W - PIANO_W) / pps;
+  const endSec = (scrollX + W - PIANO_W) / pps;
 
   for (const n of notes) {
     if (n.time + n.dur < startSec || n.time > endSec) continue;
     if (n.note < scrollNote || n.note >= scrollNote + visNotes) continue;
 
-    const x  = PIANO_W + n.time * pps - scrollX;
-    const w  = Math.max(NOTE_MIN_W, n.dur * pps);
-    const y  = noteToY(n.note, H);
-    const h  = noteHeight - 1;
-    const col    = CHANNEL_COLORS[n.ch % CHANNEL_COLORS.length];
+    const x = PIANO_W + n.time * pps - scrollX;
+    const w = Math.max(NOTE_MIN_W, n.dur * pps);
+    const y = noteToY(n.note, H);
+    const h = noteHeight - 1;
+    const col = CHANNEL_COLORS[n.ch % CHANNEL_COLORS.length];
     const active = ct >= n.time && ct < n.time + n.dur + 0.01;
 
     if (active) {
@@ -663,9 +699,9 @@ function drawNotes(W, H, visNotes, ct) {
     }
     ctx2d.save();
     ctx2d.globalAlpha = active ? 1.0 : 0.82;
-    ctx2d.fillStyle   = col;
+    ctx2d.fillStyle = col;
     ctx2d.strokeStyle = active ? '#ffffffaa' : col + '60';
-    ctx2d.lineWidth   = 0.5;
+    ctx2d.lineWidth = 0.5;
     roundRect(ctx2d, x, y + 0.5, w, h, 2);
     ctx2d.fill(); ctx2d.stroke();
     ctx2d.restore();
@@ -683,7 +719,7 @@ function drawPlayhead(H, ct) {
   ctx2d.strokeStyle = '#c4b5fd'; ctx2d.lineWidth = 1.5;
   ctx2d.beginPath(); ctx2d.moveTo(x, 0); ctx2d.lineTo(x, H); ctx2d.stroke();
   ctx2d.fillStyle = '#c4b5fd';
-  ctx2d.beginPath(); ctx2d.moveTo(x-6,0); ctx2d.lineTo(x+6,0); ctx2d.lineTo(x,10); ctx2d.closePath(); ctx2d.fill();
+  ctx2d.beginPath(); ctx2d.moveTo(x - 6, 0); ctx2d.lineTo(x + 6, 0); ctx2d.lineTo(x, 10); ctx2d.closePath(); ctx2d.fill();
 }
 
 // ─────────────────────────────────────────────────────────
@@ -699,27 +735,27 @@ function isBlack(note) { return BLACK_SEMITONES.has(note % 12); }
 function roundRect(ctx, x, y, w, h, r) {
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); return; }
   ctx.beginPath();
-  ctx.moveTo(x+r, y); ctx.arcTo(x+w,y, x+w,y+h, r); ctx.arcTo(x+w,y+h, x,y+h, r);
-  ctx.arcTo(x,y+h, x,y, r); ctx.arcTo(x,y, x+w,y, r); ctx.closePath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
 
 function fmtTime(sec) {
   if (!isFinite(sec) || sec < 0) sec = 0;
   const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
-  return `${m}:${String(s).padStart(2,'0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function updateSeekFill(t) {
   seekFill.style.width = (duration > 0 ? t / duration * 100 : 0).toFixed(2) + '%';
 }
 
-function setStatus(msg, cls='') {
+function setStatus(msg, cls = '') {
   statusEl.textContent = msg;
-  statusEl.className   = 'status-badge' + (cls ? ' '+cls : '');
+  statusEl.className = 'status-badge' + (cls ? ' ' + cls : '');
 }
 
 let loadingEl = null;
-function showLoading(show, msg='') {
+function showLoading(show, msg = '') {
   if (show) {
     if (!loadingEl) {
       loadingEl = document.createElement('div');
@@ -736,12 +772,12 @@ function showLoading(show, msg='') {
 
 function setNotesViewport() {
   if (!notes.length) return;
-  const minNote = Math.max(0,   notes.reduce((m,n) => Math.min(m, n.note), 127) - 4);
-  const maxNote = Math.min(127, notes.reduce((m,n) => Math.max(m, n.note),   0) + 4);
-  const range   = maxNote - minNote + 1;
-  noteHeight    = Math.max(4, Math.min(18, Math.floor((logH - RULER_H) / range)));
-  scrollNote    = minNote;
-  scrollX       = 0;
+  const minNote = Math.max(0, notes.reduce((m, n) => Math.min(m, n.note), 127) - 4);
+  const maxNote = Math.min(127, notes.reduce((m, n) => Math.max(m, n.note), 0) + 4);
+  const range = maxNote - minNote + 1;
+  noteHeight = Math.max(4, Math.min(18, Math.floor((logH - RULER_H) / range)));
+  scrollNote = minNote;
+  scrollX = 0;
   seekBar.value = 0;
   updateSeekFill(0);
 }

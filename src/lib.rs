@@ -96,3 +96,15 @@ pub fn compile_mml(source: &str) -> Vec<u8> {
     let res = sakuramml::compile(source, sakuramml::SAKURA_DEBUG_NONE);
     res.bin
 }
+
+/// Shift_JISの可能性があるバイト列をUTF-8文字列に変換する
+#[wasm_bindgen]
+pub fn encoding_to_utf8(data: &[u8]) -> String {
+    // UTF-8として正常に解釈できるか確認
+    if let Ok(s) = std::str::from_utf8(data) {
+        return s.to_string();
+    }
+    // UTF-8でなければShift_JISとみなしてデコード
+    let (cow, _encoding_used, _had_errors) = encoding_rs::SHIFT_JIS.decode(data);
+    cow.into_owned()
+}

@@ -678,6 +678,7 @@ dependencies = [
 name = "sakuramml-player"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
  "js-sys",
  "once_cell",
  "rodio",

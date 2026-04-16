@@ -1,14 +1,16 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>サクラ MIDI プレイヤー</title>
+  <title>サクラMML/MIDIプレイヤー</title>
   <meta name="description" content="Rust/WebAssembly + Web Audio API によるブラウザ対応 MIDI プレイヤー。インタラクティブなピアノロール表示付き。" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <div class="app" id="app">
 
@@ -16,7 +18,7 @@
     <header class="app-header">
       <div class="logo">
         <span class="logo-icon" aria-hidden="true">🌸</span>
-        <h1>サクラ MIDI プレイヤー</h1>
+        <h1>サクラMML/MIDIプレイヤー</h1>
       </div>
       <div class="header-right">
         <span id="status" class="status-badge">初期化中…</span>
@@ -28,17 +30,17 @@
 
       <!-- ファイル選択 -->
       <div class="ctrl-group">
-        <label for="file-input" class="file-btn" id="file-label" title="MIDIファイルを開く">
+        <label for="file-input" class="file-btn" id="file-label" title="MIDI / MML ファイルを開く">
           <span class="btn-icon">📂</span>
-          <span>MIDIファイルを開く</span>
-          <input type="file" id="file-input" accept=".mid,.midi" hidden />
+          <span>開く</span>
+          <input type="file" id="file-input" accept=".mid,.midi,.mml" hidden />
         </label>
       </div>
 
       <!-- トランスポート -->
       <div class="ctrl-group transport">
-        <button id="stop-btn"  class="transport-btn"         title="停止"    disabled>⏹</button>
-        <button id="play-btn"  class="transport-btn primary" title="再生"    disabled>▶</button>
+        <button id="stop-btn" class="transport-btn" title="停止" disabled>⏹</button>
+        <button id="play-btn" class="transport-btn primary" title="再生" disabled>▶</button>
       </div>
 
       <!-- シークバー -->
@@ -57,7 +59,7 @@
         <input type="range" id="volume" class="volume-slider" min="0" max="1" step="0.01" value="0.8" title="音量" />
         <button id="zoom-out" class="icon-btn" title="ズームアウト">−</button>
         <span class="zoom-label" id="zoom-label">100px/s</span>
-        <button id="zoom-in"  class="icon-btn" title="ズームイン">＋</button>
+        <button id="zoom-in" class="icon-btn" title="ズームイン">＋</button>
       </div>
 
     </div><!-- /controls-panel -->
@@ -78,13 +80,14 @@
       <div class="drop-overlay" id="drop-overlay" aria-hidden="true">
         <div class="drop-message">
           <span>🎵</span>
-          <p>MIDI ファイルをドロップ</p>
+          <p>MIDI / MML ファイルをドロップ</p>
         </div>
       </div>
     </div>
 
   </div><!-- /app -->
 
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=2"></script>
 </body>
+
 </html>
