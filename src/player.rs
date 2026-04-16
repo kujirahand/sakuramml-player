@@ -17,15 +17,28 @@ use crate::synth::Synth;
 // チャンクイベント (Copy で借用問題を回避)
 // ─────────────────────────────────────────────
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChunkEventType {
+    NoteOn { note: u8, vel: u8, bank: u8, program: u8 },
+    NoteOff { note: u8 },
+    Control { command: u8, data1: u8, data2: u8 },
+}
+
+impl ChunkEventType {
+    fn priority(&self) -> u8 {
+        match self {
+            ChunkEventType::Control { .. } => 0,
+            ChunkEventType::NoteOff { .. } => 1,
+            ChunkEventType::NoteOn { .. } => 2,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ChunkEvent {
     sample: usize,
     ch: u8,
-    note: u8,
-    vel: u8,
-    is_on: bool,
-    bank: u8,
-    program: u8,
+    event: ChunkEventType,
 }
 
 // ─────────────────────────────────────────────
@@ -73,15 +86,19 @@ impl Player {
         let sr = self.sr as f64;
         let total = (midi.duration_sec * sr).ceil() as usize + 1;
 
-        let mut evs: Vec<ChunkEvent> = Vec::with_capacity(midi.notes.len() * 2);
+        let mut evs: Vec<ChunkEvent> = Vec::with_capacity(midi.notes.len() * 2 + midi.control_events.len());
         for n in &midi.notes {
             let on_s  = (n.time_sec * sr) as usize;
             let off_s = ((n.time_sec + n.duration_sec) * sr) as usize;
-            evs.push(ChunkEvent { sample: on_s,              ch: n.channel, note: n.note, vel: n.velocity, is_on: true,  bank: n.bank, program: n.program });
-            evs.push(ChunkEvent { sample: off_s.min(total-1), ch: n.channel, note: n.note, vel: 0,          is_on: false, bank: n.bank, program: n.program });
+            evs.push(ChunkEvent { sample: on_s, ch: n.channel, event: ChunkEventType::NoteOn { note: n.note, vel: n.velocity, bank: n.bank, program: n.program } });
+            evs.push(ChunkEvent { sample: off_s.min(total-1), ch: n.channel, event: ChunkEventType::NoteOff { note: n.note } });
         }
-        // 同一サンプル内: NoteOff (false < true) → NoteOn の順
-        evs.sort_by(|a, b| a.sample.cmp(&b.sample).then(a.is_on.cmp(&b.is_on)));
+        for c in &midi.control_events {
+            let s = (c.time_sec * sr) as usize;
+            evs.push(ChunkEvent { sample: s.min(total-1), ch: c.channel, event: ChunkEventType::Control { command: c.command, data1: c.data1, data2: c.data2 } });
+        }
+        // 同一サンプル内: Control -> NoteOff -> NoteOn の順
+        evs.sort_by(|a, b| a.sample.cmp(&b.sample).then(a.event.priority().cmp(&b.event.priority())));
 
         self.events         = evs;
         self.total_samples  = total;
@@ -115,29 +132,43 @@ impl Player {
         let pos = pos.min(self.total_samples);
 
         // seek 位置で発音中のノートを収集 (借用を先に終わらせる)
-        let active: Vec<(u8, u8, u8, u8, u8)> = if let Some(midi) = &self.midi_data {
+        let mut active_notes = Vec::new();
+        let mut latest_controls = std::collections::HashMap::new();
+
+        if let Some(midi) = &self.midi_data {
             let sr = self.sr as f64;
-            midi.notes.iter()
-                .filter(|n| {
-                    let on_s  = (n.time_sec * sr) as usize;
-                    let off_s = ((n.time_sec + n.duration_sec) * sr) as usize;
-                    on_s <= pos && pos < off_s
-                })
-                .map(|n| (n.channel, n.note, n.velocity, n.bank, n.program))
-                .collect()
-        } else {
-            Vec::new()
-        };
+            for n in &midi.notes {
+                let on_s  = (n.time_sec * sr) as usize;
+                let off_s = ((n.time_sec + n.duration_sec) * sr) as usize;
+                if on_s <= pos && pos < off_s {
+                    active_notes.push((n.channel, n.note, n.velocity, n.bank, n.program));
+                }
+            }
+            for c in &midi.control_events {
+                let s = (c.time_sec * sr) as usize;
+                if s <= pos {
+                    latest_controls.insert((c.channel, c.command, c.data1), c.data2);
+                }
+            }
+        }
 
         self.synth.reset();
-        for (ch, note, vel, bank, program) in active {
+        
+        let mut controls: Vec<_> = latest_controls.into_iter().collect();
+        controls.sort_by_key(|(k, _)| k.1); // コマンド順 (0xB0 -> 0xC0 -> 0xE0)
+        for ((ch, command, data1), data2) in controls {
+            self.synth.control(ch, command, data1, data2);
+        }
+
+        for (ch, note, vel, bank, program) in active_notes {
             self.synth.note_on(ch, note, vel, bank, program);
         }
 
         self.seek_internal(pos);
     }
 
-    /// カーソル位置から `frames` サンプル分を PCM に変換して返す。
+    /// カーソル位置から `frames` サンプル分をインターリーブされたステレオ PCM (f32) に変換して返す。
+    /// (返り値の `Vec` の長さは `frames * 2` になる)
     /// 末尾に達した場合は空の Vec を返す。
     pub fn render_next(&mut self, frames: usize) -> Vec<f32> {
         if self.pos_sample >= self.total_samples {
@@ -146,7 +177,7 @@ impl Player {
 
         let end           = (self.pos_sample + frames).min(self.total_samples);
         let actual_frames = end - self.pos_sample;
-        let mut output    = vec![0.0f32; actual_frames];
+        let mut output    = vec![0.0f32; actual_frames * 2];
 
         const BLOCK: usize = 128;
         let mut cur = 0usize;
@@ -158,15 +189,21 @@ impl Player {
             // このブロックに含まれるイベントを発火
             while self.ev_idx < self.events.len() && self.events[self.ev_idx].sample < abs_blk_end {
                 let ev = self.events[self.ev_idx]; // Copy
-                if ev.is_on {
-                    self.synth.note_on(ev.ch, ev.note, ev.vel, ev.bank, ev.program);
-                } else {
-                    self.synth.note_off(ev.ch, ev.note);
+                match ev.event {
+                    ChunkEventType::NoteOn { note, vel, bank, program } => {
+                        self.synth.note_on(ev.ch, note, vel, bank, program);
+                    }
+                    ChunkEventType::NoteOff { note } => {
+                        self.synth.note_off(ev.ch, note);
+                    }
+                    ChunkEventType::Control { command, data1, data2 } => {
+                        self.synth.control(ev.ch, command, data1, data2);
+                    }
                 }
                 self.ev_idx += 1;
             }
 
-            self.synth.process_block(&mut output[cur..blk_end]);
+            self.synth.process_block(&mut output[cur * 2 .. blk_end * 2]);
             cur = blk_end;
         }
 
@@ -248,7 +285,8 @@ mod tests {
     /// ch=9 ドラム (BassDrum + Snare) を含む MIDI
     fn midi_with_drums() -> Vec<u8> {
         let track = vec![
-            0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20,
+            0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20, // tempo
+            0x00, 0xB9, 0x00, 100,  // CC#0, Bank=100
             0x00, 0x99, 0x24, 0x7F, // BassDrum
             0x18, 0x89, 0x24, 0x00,
             0x18, 0x99, 0x26, 0x64, // Snare
@@ -313,9 +351,9 @@ mod tests {
         p.load(&midi_one_note()).expect("load");
         let total = p.total_samples;
 
-        // 1 回目の render_next は min(CHUNK, total) を返す
+        // 1 回目の render_next は min(CHUNK, total) を返す (ステレオなので x2)
         let chunk = p.render_next(CHUNK);
-        let expected_len = CHUNK.min(total);
+        let expected_len = CHUNK.min(total) * 2;
         assert_eq!(chunk.len(), expected_len);
     }
 
@@ -329,7 +367,7 @@ mod tests {
         while !p.is_render_done() {
             let chunk = p.render_next(CHUNK);
             assert!(!chunk.is_empty(), "未完了時に空が返ってはいけない");
-            rendered += chunk.len();
+            rendered += chunk.len() / 2;
         }
 
         assert_eq!(rendered, total, 
@@ -373,7 +411,7 @@ mod tests {
 
         // 再レンダリングも同じ合計サンプル数
         let mut rendered = 0;
-        while !p.is_render_done() { rendered += p.render_next(CHUNK).len(); }
+        while !p.is_render_done() { rendered += p.render_next(CHUNK).len() / 2; }
         assert_eq!(rendered, total);
     }
 

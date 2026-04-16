@@ -353,10 +353,15 @@ function pumpChunks() {
     const pcm = player.render_next(CHUNK_FRAMES);
     if (pcm.length === 0) { renderComplete = true; break; }
 
-    // AudioBuffer に変換 (ステレオ化)
-    const buf = audioCtx.createBuffer(2, pcm.length, SAMPLE_RATE);
-    buf.copyToChannel(pcm, 0);
-    buf.copyToChannel(pcm, 1);
+    // AudioBuffer に変換 (インターリーブされたステレオを分離)
+    const numFrames = pcm.length / 2;
+    const buf = audioCtx.createBuffer(2, numFrames, SAMPLE_RATE);
+    const leftData = buf.getChannelData(0);
+    const rightData = buf.getChannelData(1);
+    for (let i = 0; i < numFrames; i++) {
+      leftData[i] = pcm[i * 2];
+      rightData[i] = pcm[i * 2 + 1];
+    }
 
     // AudioBufferSourceNode をスケジュール
     const src = audioCtx.createBufferSource();

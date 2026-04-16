@@ -21,7 +21,8 @@ pub struct Synth {
     
     left_buf: Vec<f32>,
     right_buf: Vec<f32>,
-    psg_buf: Vec<f32>,
+    psg_left_buf: Vec<f32>,
+    psg_right_buf: Vec<f32>,
     
     current_sf2_bank: [u8; 16],
     current_sf2_program: [u8; 16],
@@ -47,7 +48,8 @@ impl Synth {
             psg_synth: PsgSynth::new(sr),
             left_buf: Vec::new(),
             right_buf: Vec::new(),
-            psg_buf: Vec::new(),
+            psg_left_buf: Vec::new(),
+            psg_right_buf: Vec::new(),
             current_sf2_bank: [0; 16],
             current_sf2_program: [0; 16],
             note_routing: [[ROUTE_NONE; 128]; 16],
@@ -90,6 +92,22 @@ impl Synth {
         }
     }
 
+    pub fn control(&mut self, ch: u8, command: u8, data1: u8, data2: u8) {
+        if command == 0xB0 {
+            if data1 == 91 {
+                self.psg_synth.set_reverb_send(ch, data2);
+            } else if data1 == 10 {
+                self.psg_synth.set_pan(ch, data2);
+            }
+        } else if command == 0xE0 {
+            let val = ((data2 as u16) << 7) | (data1 as u16);
+            self.psg_synth.set_pitch_bend(ch, val);
+        }
+        if let Some(s) = &mut self.sf2_synth {
+            s.process_midi_message(ch as i32, command as i32, data1 as i32, data2 as i32);
+        }
+    }
+
     pub fn note_off(&mut self, ch: u8, note: u8) {
         let ch_idx = (ch & 0x0F) as usize;
         let note_idx = (note & 0x7F) as usize;
@@ -108,39 +126,44 @@ impl Synth {
         self.note_routing[ch_idx][note_idx] = ROUTE_NONE;
     }
 
-    /// buf をモノラル PCM (f32) で埋める
-    pub fn process_block(&mut self, buf: &mut [f32]) {
-        let len = buf.len();
+    /// interleaved_buf をステレオ・インターリーブ PCM (f32) で埋める
+    pub fn process_block(&mut self, interleaved_buf: &mut [f32]) {
+        let frames = interleaved_buf.len() / 2;
         
         // 1. SF2 波形を生成
         if let Some(s) = &mut self.sf2_synth {
-            if self.left_buf.len() < len {
-                self.left_buf.resize(len, 0.0);
-                self.right_buf.resize(len, 0.0);
+            if self.left_buf.len() < frames {
+                self.left_buf.resize(frames, 0.0);
+                self.right_buf.resize(frames, 0.0);
             }
             // render はバッファに加算ではなく上書きする
-            s.render(&mut self.left_buf[..len], &mut self.right_buf[..len]);
+            s.render(&mut self.left_buf[..frames], &mut self.right_buf[..frames]);
         } else {
-            if self.left_buf.len() < len {
-                self.left_buf.resize(len, 0.0);
-                self.right_buf.resize(len, 0.0);
+            if self.left_buf.len() < frames {
+                self.left_buf.resize(frames, 0.0);
+                self.right_buf.resize(frames, 0.0);
             }
-            self.left_buf[..len].fill(0.0);
-            self.right_buf[..len].fill(0.0);
+            self.left_buf[..frames].fill(0.0);
+            self.right_buf[..frames].fill(0.0);
         }
 
         // 2. PSG 波形を生成
-        if self.psg_buf.len() < len {
-            self.psg_buf.resize(len, 0.0);
+        if self.psg_left_buf.len() < frames {
+            self.psg_left_buf.resize(frames, 0.0);
+            self.psg_right_buf.resize(frames, 0.0);
         }
-        self.psg_buf[..len].fill(0.0); // 一応クリア
-        self.psg_synth.process_block(&mut self.psg_buf[..len]);
+        self.psg_left_buf[..frames].fill(0.0);
+        self.psg_right_buf[..frames].fill(0.0);
+        self.psg_synth.process_block(&mut self.psg_left_buf[..frames], &mut self.psg_right_buf[..frames]);
 
         // 3. ミックスダウンして出力
-        for i in 0..len {
-            let sf2_mono = (self.left_buf[i] + self.right_buf[i]) * 0.5;
-            let psg_mono = self.psg_buf[i];
-            buf[i] = (sf2_mono + psg_mono).clamp(-1.0, 1.0);
+        for i in 0..frames {
+            let sf2_l = self.left_buf[i];
+            let sf2_r = self.right_buf[i];
+            let psg_l = self.psg_left_buf[i];
+            let psg_r = self.psg_right_buf[i];
+            interleaved_buf[i * 2] = (sf2_l + psg_l).clamp(-1.0, 1.0);
+            interleaved_buf[i * 2 + 1] = (sf2_r + psg_r).clamp(-1.0, 1.0);
         }
     }
 }

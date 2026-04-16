@@ -21,11 +21,22 @@ pub struct NoteEvent {
     pub program: u8,
 }
 
+#[derive(Debug, Clone)]
+pub struct MidiControlEvent {
+    pub tick: u32,
+    pub time_sec: f64,
+    pub channel: u8,
+    pub command: u8, // 0xB0, 0xC0, 0xE0 など
+    pub data1: u8,
+    pub data2: u8,
+}
+
 #[allow(dead_code)]
 pub struct MidiData {
     pub format: u16,
     pub ticks_per_quarter: u32,
     pub notes: Vec<NoteEvent>,
+    pub control_events: Vec<MidiControlEvent>,
     pub duration_sec: f64,
     /// (tick, マイクロ秒/拍) のリスト (tick 昇順)
     pub tempo_map: Vec<(u32, u32)>,
@@ -40,6 +51,7 @@ enum RawEventType {
     NoteOff { channel: u8, note: u8 },
     ProgramChange { channel: u8, program: u8 },
     ControlChange { channel: u8, controller: u8, value: u8 },
+    PitchBend { channel: u8, value: u16 },
     SetTempo { us_per_beat: u32 },
     Other,
 }
@@ -134,8 +146,14 @@ fn handle_channel_event(
             if *offset + 2 > data.len() {
                 return Err("Unexpected end in 2-byte event".into());
             }
+            let d1 = data[*offset];
+            let d2 = data[*offset + 1];
             *offset += 2;
-            events.push(RawEvent { tick, event_type: RawEventType::Other });
+            if (status & 0xF0) == 0xE0 {
+                events.push(RawEvent { tick, event_type: RawEventType::PitchBend { channel, value: ((d2 as u16) << 7) | (d1 as u16) } });
+            } else {
+                events.push(RawEvent { tick, event_type: RawEventType::Other });
+            }
         }
         0xB0 => {
             // Control Change (and Channel Mode)
@@ -344,6 +362,7 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
             RawEventType::SetTempo { .. } => 1,
             RawEventType::ProgramChange { .. } => 2,
             RawEventType::ControlChange { .. } => 3,
+            RawEventType::PitchBend { .. } => 3,
             RawEventType::NoteOn { .. } => 4,
             RawEventType::Other => 5,
         };
@@ -369,6 +388,7 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
     // キー: (channel, note), 値: Vec<(start_tick, velocity, bank, program)>
     let mut pending: HashMap<(u8, u8), Vec<(u32, u8, u8, u8)>> = HashMap::new();
     let mut note_events: Vec<NoteEvent> = Vec::new();
+    let mut control_events: Vec<MidiControlEvent> = Vec::new();
     
     let mut current_bank = [0u8; 16];
     let mut current_program = [0u8; 16];
@@ -377,9 +397,45 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
         match &ev.event_type {
             RawEventType::ControlChange { channel, controller: 0, value } => {
                 current_bank[(*channel & 0x0F) as usize] = *value;
+                control_events.push(MidiControlEvent {
+                    tick: ev.tick,
+                    time_sec: ticks_to_sec(ev.tick, &tempo_map, tpq),
+                    channel: *channel,
+                    command: 0xB0,
+                    data1: 0,
+                    data2: *value,
+                });
+            }
+            RawEventType::ControlChange { channel, controller, value } => {
+                control_events.push(MidiControlEvent {
+                    tick: ev.tick,
+                    time_sec: ticks_to_sec(ev.tick, &tempo_map, tpq),
+                    channel: *channel,
+                    command: 0xB0,
+                    data1: *controller,
+                    data2: *value,
+                });
             }
             RawEventType::ProgramChange { channel, program } => {
                 current_program[(*channel & 0x0F) as usize] = *program;
+                control_events.push(MidiControlEvent {
+                    tick: ev.tick,
+                    time_sec: ticks_to_sec(ev.tick, &tempo_map, tpq),
+                    channel: *channel,
+                    command: 0xC0,
+                    data1: *program,
+                    data2: 0,
+                });
+            }
+            RawEventType::PitchBend { channel, value } => {
+                control_events.push(MidiControlEvent {
+                    tick: ev.tick,
+                    time_sec: ticks_to_sec(ev.tick, &tempo_map, tpq),
+                    channel: *channel,
+                    command: 0xE0,
+                    data1: (*value & 0x7F) as u8,
+                    data2: (*value >> 7) as u8,
+                });
             }
             RawEventType::NoteOn { channel, note, velocity } => {
                 let ch_idx = (*channel & 0x0F) as usize;
@@ -442,6 +498,7 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
         format,
         ticks_per_quarter: tpq,
         notes: note_events,
+        control_events,
         duration_sec,
         tempo_map,
     })

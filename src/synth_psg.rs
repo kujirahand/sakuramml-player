@@ -166,7 +166,7 @@ impl Voice {
     }
 
     /// 1 サンプルを生成して返す。非アクティブなら 0.0。
-    fn tick(&mut self, sr: f32) -> f32 {
+    fn tick(&mut self, sr: f32, pb_semitones: f32) -> f32 {
         if !self.active { return 0.0; }
 
         // ── エンベロープ更新 ──────────────────────
@@ -220,7 +220,8 @@ impl Voice {
             let noise = self.rng.next_f32_signed();
 
             // トーン成分 (方形波) ― バスドラムやタムのピッチ感
-            self.phase += self.freq / sr;
+            let current_freq = self.freq * 2.0_f32.powf(pb_semitones / 12.0);
+            self.phase += current_freq / sr;
             if self.phase >= 1.0 { self.phase -= 1.0; }
             let tone = if self.phase < 0.5 { 1.0f32 } else { -1.0f32 };
 
@@ -229,7 +230,8 @@ impl Voice {
             (w, self.drum_level * 0.09)
         } else {
             // 方形波
-            self.phase += self.freq / sr;
+            let current_freq = self.freq * 2.0_f32.powf(pb_semitones / 12.0);
+            self.phase += current_freq / sr;
             if self.phase >= 1.0 { self.phase -= 1.0; }
             let w = if self.phase < 0.5 { 1.0f32 } else { -1.0f32 };
             (w, 0.07)
@@ -240,21 +242,108 @@ impl Voice {
 }
 
 // ─────────────────────────────────────────────────────────
+// 簡易リバーブ (Freeverb風のComb / AllPass構成)
+// ─────────────────────────────────────────────────────────
+
+struct CombFilter {
+    buffer: Vec<f32>,
+    idx: usize,
+    feedback: f32,
+    damp: f32,
+    store: f32,
+}
+
+impl CombFilter {
+    fn new(size: usize) -> Self {
+        Self { buffer: vec![0.0; size], idx: 0, feedback: 0.84, damp: 0.2, store: 0.0 }
+    }
+    fn process(&mut self, input: f32) -> f32 {
+        let output = self.buffer[self.idx];
+        self.store = (output * (1.0 - self.damp)) + (self.store * self.damp);
+        self.buffer[self.idx] = input + (self.store * self.feedback);
+        self.idx = (self.idx + 1) % self.buffer.len();
+        output
+    }
+}
+
+struct AllPassFilter {
+    buffer: Vec<f32>,
+    idx: usize,
+}
+
+impl AllPassFilter {
+    fn new(size: usize) -> Self {
+        Self { buffer: vec![0.0; size], idx: 0 }
+    }
+    fn process(&mut self, input: f32) -> f32 {
+        let buf_val = self.buffer[self.idx];
+        let output = -input + buf_val;
+        self.buffer[self.idx] = input + (buf_val * 0.5); // feedback=0.5
+        self.idx = (self.idx + 1) % self.buffer.len();
+        output
+    }
+}
+
+struct SimpleReverb {
+    combs: Vec<CombFilter>,
+    allpasses: Vec<AllPassFilter>,
+}
+
+impl SimpleReverb {
+    fn new(sr: f32) -> Self {
+        let mut combs = Vec::new();
+        let scale = sr / 44100.0;
+        for &size in &[1116, 1188, 1277, 1356, 1422, 1491] {
+            combs.push(CombFilter::new((size as f32 * scale).max(1.0) as usize));
+        }
+        let mut allpasses = Vec::new();
+        for &size in &[225, 341, 441] {
+            allpasses.push(AllPassFilter::new((size as f32 * scale).max(1.0) as usize));
+        }
+        Self { combs, allpasses }
+    }
+    fn process(&mut self, input: f32) -> f32 {
+        let mut out = 0.0;
+        for c in &mut self.combs {
+            out += c.process(input);
+        }
+        for a in &mut self.allpasses {
+            out = a.process(out);
+        }
+        out * 0.25
+    }
+}
+
+// ─────────────────────────────────────────────────────────
 // シンセサイザー (複数ボイス管理)
 // ─────────────────────────────────────────────────────────
 
 pub struct PsgSynth {
     voices: Vec<Voice>,
     sr:     f32,
+    reverb: SimpleReverb,
+    reverb_send: [f32; 16],
+    pitch_bend: [f32; 16], // semitones (-2.0 to +2.0)
+    pan: [f32; 16],        // 0.0 = left, 0.5 = center, 1.0 = right
 }
 
 impl PsgSynth {
     pub fn new(sr: f32) -> Self {
-        PsgSynth { voices: vec![Voice::new(); MAX_VOICES], sr }
+        PsgSynth {
+            voices: vec![Voice::new(); MAX_VOICES],
+            sr,
+            reverb: SimpleReverb::new(sr),
+            reverb_send: [0.0; 16],
+            pitch_bend: [0.0; 16],
+            pan: [0.5; 16],
+        }
     }
 
     pub fn reset(&mut self) {
         for v in &mut self.voices { v.reset(); }
+        self.reverb = SimpleReverb::new(self.sr);
+        self.pitch_bend = [0.0; 16];
+        self.pan = [0.5; 16];
     }
 
     pub fn note_on(&mut self, ch: u8, note: u8, vel: u8) {
@@ -279,13 +368,52 @@ impl PsgSynth {
         }
     }
 
-    /// buf をモノラル PCM (f32) で埋める (128 サンプル単位を想定)
-    pub fn process_block(&mut self, buf: &mut [f32]) {
+    pub fn set_reverb_send(&mut self, ch: u8, val: u8) {
+        let ch_idx = (ch & 0x0F) as usize;
+        self.reverb_send[ch_idx] = (val as f32) / 127.0;
+    }
+
+    pub fn set_pitch_bend(&mut self, ch: u8, val: u16) {
+        let ch_idx = (ch & 0x0F) as usize;
+        // val ranges 0..16383, center is 8192
+        let pb_normalized = (val as f32 - 8192.0) / 8192.0;
+        self.pitch_bend[ch_idx] = pb_normalized * 2.0; // +/- 2 semitones
+    }
+
+    pub fn set_pan(&mut self, ch: u8, val: u8) {
+        let ch_idx = (ch & 0x0F) as usize;
+        self.pan[ch_idx] = (val as f32) / 127.0;
+    }
+
+    /// left_buf と right_buf をステレオ PCM (f32) で埋める (128 サンプル単位を想定)
+    pub fn process_block(&mut self, left_buf: &mut [f32], right_buf: &mut [f32]) {
         let sr = self.sr;
-        for sample in buf.iter_mut() {
-            let mut mix = 0.0f32;
-            for v in &mut self.voices { mix += v.tick(sr); }
-            *sample = mix.clamp(-1.0, 1.0);
+        for i in 0..left_buf.len() {
+            let mut mix_l = 0.0f32;
+            let mut mix_r = 0.0f32;
+            let mut rev_in = 0.0f32;
+            for v in &mut self.voices {
+                let ch_idx = (v.channel & 0x0F) as usize;
+                let pb = self.pitch_bend[ch_idx];
+                let smp = v.tick(sr, pb);
+                if smp != 0.0 {
+                    let pan = self.pan[ch_idx];
+                    let angle = pan * std::f32::consts::PI / 2.0;
+                    let l_gain = angle.cos();
+                    let r_gain = angle.sin();
+                    
+                    mix_l += smp * l_gain;
+                    mix_r += smp * r_gain;
+                    
+                    if v.active {
+                        let send = self.reverb_send[ch_idx];
+                        rev_in += smp * send;
+                    }
+                }
+            }
+            let rev_out = self.reverb.process(rev_in);
+            left_buf[i] = (mix_l + rev_out).clamp(-1.0, 1.0);
+            right_buf[i] = (mix_r + rev_out).clamp(-1.0, 1.0);
         }
     }
 }
