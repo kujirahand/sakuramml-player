@@ -75,13 +75,14 @@ body {
   font-size: 1.3rem;
   display: inline-block;
   animation: bloom 4s ease-in-out infinite;
+  -webkit-text-fill-color: initial;
 }
 @keyframes bloom {
   0%,100% { transform: rotate(-6deg) scale(1); }
   50%      { transform: rotate( 6deg) scale(1.15); }
 }
 
-.logo h1 {
+.logo h1, .logo a {
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -89,6 +90,7 @@ body {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  text-decoration: none;
 }
 
 .status-badge {

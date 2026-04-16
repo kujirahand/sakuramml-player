@@ -93,6 +93,7 @@ const rollContainer = document.getElementById('roll-container');
 // MML エディタ
 const mmlInput = document.getElementById('mml-input');
 
+
 // ─────────────────────────────────────────────────────────
 // 初期化
 // ─────────────────────────────────────────────────────────
@@ -205,12 +206,18 @@ function setupEvents() {
 
   mmlInput.addEventListener('input', () => {
     mmlDirty = true;
+    localStorage.setItem('mml', mmlInput.value);
     if (mmlInput.value.trim().length > 0) {
       playBtn.disabled = false;
     } else if (!notes.length) {
       playBtn.disabled = true;
     }
   });
+
+  const savedMml = localStorage.getItem('mml');
+  if (savedMml) {
+    mmlInput.value = savedMml;
+  }
 
   if (mmlInput.value.trim().length > 0) {
     playBtn.disabled = false;
@@ -260,6 +267,7 @@ async function loadFile(file) {
       const text = encoding_to_utf8(fileBytes);
       console.log('[loadFile] Text read length:', text.length);
       mmlInput.value = text;
+      localStorage.setItem('mml', text);
       mmlDirty = false;
       console.log('[loadFile] Calling compile_mml');
       const bytes = compile_mml(text);
@@ -275,6 +283,9 @@ async function loadFile(file) {
       console.log('[loadFile] Reading MIDI file as ArrayBuffer');
       const bytes = new Uint8Array(await file.arrayBuffer());
       console.log('[loadFile] ArrayBuffer read length:', bytes.length);
+      mmlInput.value = '';
+      localStorage.removeItem('mml');
+      mmlDirty = false;
       loadMidiBytes(bytes, file.name);
     }
   } catch (e) {
