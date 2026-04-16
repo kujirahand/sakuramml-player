@@ -1,9 +1,9 @@
-mod midi_parser;
-mod player;
-mod synth;
-mod synth_psg;
-mod utils;
-mod soundfont;
+pub mod midi_parser;
+pub mod player;
+pub mod synth;
+pub mod synth_psg;
+pub mod utils;
+pub mod soundfont;
 use wasm_bindgen::prelude::*;
 
 /// ブラウザ向け MIDI プレイヤー (Rust/Wasm)
@@ -88,4 +88,11 @@ impl MidiPlayer {
     pub fn get_render_pos(&self) -> u32 {
         self.inner.pos_sample as u32
     }
+}
+
+/// MMLテキストをMIDIバイト列(Uint8Array)にコンパイルする
+#[wasm_bindgen]
+pub fn compile_mml(source: &str) -> Vec<u8> {
+    let res = sakuramml::compile(source, sakuramml::SAKURA_DEBUG_NONE);
+    res.bin
 }

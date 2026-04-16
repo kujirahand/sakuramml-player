@@ -61,13 +61,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3ca93af923df5fc03beddbf464242620fd24daa9e10f9ecd56eb9571eb7ba38"
 
 [[package]]
+name = "sakuramml"
+version = "0.1.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63c6bb41e766503f9c392ab0a275c40957edff1df29270dfb10cd782fa1fc115"
+dependencies = [
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "sakuramml-player"
 version = "0.1.0"
 dependencies = [
  "js-sys",
  "once_cell",
  "rustysynth",
+ "sakuramml",
  "wasm-bindgen",
+ "wav_io",
 ]
 
 [[package]]
@@ -79,6 +90,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -130,4 +161,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5fd04d9e306f1907bd13c6361b5c6bfc7b3b3c095ed3f8a9246390f8dbdee129"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wav_io"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c656bae28b138bffcfcd51cc785d9720ea952018e6d961bdf8aae176bcdb786"
+dependencies = [
+ "thiserror",
 ]

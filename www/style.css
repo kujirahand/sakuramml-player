@@ -288,6 +288,37 @@ body {
 }
 .icon-btn:hover { border-color: var(--accent); color: var(--text); }
 
+/* ── MML エディタ ────────────────────────── */
+.mml-editor-panel {
+  display: flex;
+  height: 150px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  padding: 10px;
+  gap: 10px;
+}
+#mml-input {
+  flex: 1;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--card-r);
+  color: var(--text);
+  padding: 12px;
+  font-family: 'Inter', monospace;
+  font-size: 0.9rem;
+  resize: none;
+  outline: none;
+  transition: border-color var(--transition);
+}
+#mml-input:focus {
+  border-color: var(--accent);
+}
+.mml-controls {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
 /* ── ピアノロール ────────────────────────── */
 .roll-container {
   flex: 1;

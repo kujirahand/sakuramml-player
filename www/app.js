@@ -12,7 +12,7 @@
  * 5. シークは stopAllChunks() → seek_to() → pumpChunks() のリセット
  */
 
-import init, { MidiPlayer, load_soundfont } from './pkg/sakuramml_player.js';
+import init, { MidiPlayer, load_soundfont, compile_mml } from './pkg/sakuramml_player.js';
 
 // ─────────────────────────────────────────────────────────
 // 定数
@@ -88,6 +88,10 @@ const volumeSlider = document.getElementById('volume');
 const dropOverlay  = document.getElementById('drop-overlay');
 const rollContainer= document.getElementById('roll-container');
 
+// MML エディタ
+const mmlInput     = document.getElementById('mml-input');
+const compileBtn   = document.getElementById('compile-btn');
+
 // ─────────────────────────────────────────────────────────
 // 初期化
 // ─────────────────────────────────────────────────────────
@@ -153,8 +157,38 @@ function setupEvents() {
 
   window.addEventListener('resize', () => { resizeCanvas(); drawFrame(getCurrentTime()); });
   window.addEventListener('keydown', e => {
+    // text area focus 時はスペースキー再生を無効化
     if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); togglePlay(); }
   });
+
+  compileBtn.addEventListener('click', onCompileMml);
+}
+
+// ─────────────────────────────────────────────────────────
+// MML コンパイル
+// ─────────────────────────────────────────────────────────
+
+function onCompileMml() {
+  const mml = mmlInput.value.trim();
+  if (!mml) return;
+
+  showLoading(true, 'MMLをコンパイル中…');
+  stopPlayback();
+
+  setTimeout(() => {
+    try {
+      const bytes = compile_mml(mml);
+      if (bytes && bytes.length > 0) {
+        loadMidiBytes(bytes, 'MML');
+      } else {
+        throw new Error("コンパイルに失敗しました。");
+      }
+    } catch(e) {
+      showLoading(false);
+      setStatus('コンパイルエラー: ' + (e.message ?? e), 'err');
+      console.error(e);
+    }
+  }, 10);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -168,7 +202,16 @@ async function loadFile(file) {
 
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    loadMidiBytes(bytes, file.name);
+  } catch(e) {
+    showLoading(false);
+    setStatus('エラー: ' + (e.message ?? e), 'err');
+    console.error(e);
+  }
+}
 
+function loadMidiBytes(bytes, title) {
+  try {
     // Rust/Wasm で MIDI 解析 & イベントリスト構築
     const json = player.load(bytes);
     notes    = JSON.parse(json);
@@ -193,7 +236,7 @@ async function loadFile(file) {
     const totalSec = player.get_total_samples() / SAMPLE_RATE;
     const chunkCount = Math.ceil(totalSec / CHUNK_SEC);
     setStatus(
-      `${file.name}  |  ${notes.length} 音符  |  ${fmtTime(duration)}` +
+      `${title}  |  ${notes.length} 音符  |  ${fmtTime(duration)}` +
       `  |  チャンク数: ${chunkCount} (各 ${CHUNK_SEC}s)`,
       'ok'
     );
@@ -201,6 +244,11 @@ async function loadFile(file) {
     playBtn.disabled = false;
     stopBtn.disabled = false;
     drawFrame(0);
+    
+    // Auto Play (optional, maybe nice for MML input)
+    if (title === 'MML') {
+      startPlayback(0);
+    }
 
   } catch(e) {
     showLoading(false);
