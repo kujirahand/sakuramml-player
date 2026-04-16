@@ -1,6 +1,9 @@
 # WAV files
 *.wav
 
+# .DS_Store
+**/.DS_Store
+
 # will have compiled files and executables
 debug
 target
