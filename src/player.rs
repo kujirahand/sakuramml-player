@@ -77,10 +77,9 @@ impl Player {
     // 公開 API
     // ─────────────────────────────────────────
 
-    /// MIDI を読み込み、イベントリストを構築。JSON ノートリストを返す。
     pub fn load(&mut self, data: &[u8]) -> Result<String, String> {
         let midi = parse(data)?;
-        let json = Self::notes_to_json(&midi.notes);
+        let json = Self::data_to_json(&midi.notes, &midi.beats);
 
         // サンプル単位のイベントリストを構築
         let sr = self.sr as f64;
@@ -116,8 +115,8 @@ impl Player {
 
     pub fn get_note_events_json(&self) -> String {
         match &self.midi_data {
-            Some(d) => Self::notes_to_json(&d.notes),
-            None    => "[]".to_string(),
+            Some(d) => Self::data_to_json(&d.notes, &d.beats),
+            None    => r#"{"notes":[],"beats":[]}"#.to_string(),
         }
     }
 
@@ -227,8 +226,8 @@ impl Player {
         self.synth.reset();
     }
 
-    fn notes_to_json(notes: &[NoteEvent]) -> String {
-        let items: Vec<String> = notes.iter().map(|n| {
+    fn data_to_json(notes: &[NoteEvent], beats: &[crate::midi_parser::BeatInfo]) -> String {
+        let note_items: Vec<String> = notes.iter().map(|n| {
             format!(
                 r#"{{"tick":{tick},"time":{time:.4},"ch":{ch},"note":{note},"vel":{vel},"dur":{dur:.4}}}"#,
                 tick = n.tick,
@@ -239,7 +238,18 @@ impl Player {
                 dur  = n.duration_sec,
             )
         }).collect();
-        format!("[{}]", items.join(","))
+        let beat_items: Vec<String> = beats.iter().map(|b| {
+            format!(
+                r#"{{"time":{time:.4},"is_measure":{measure}}}"#,
+                time = b.time_sec,
+                measure = if b.is_measure { "true" } else { "false" }
+            )
+        }).collect();
+        format!(
+            r#"{{"notes":[{notes}],"beats":[{beats}]}}"#,
+            notes = note_items.join(","),
+            beats = beat_items.join(",")
+        )
     }
 }
 
@@ -318,11 +328,12 @@ mod tests {
     fn test_load_returns_valid_json() {
         let mut p   = Player::new(SR);
         let json = p.load(&midi_one_note()).expect("load");
-        // JSON 配列形式の確認
-        assert!(json.starts_with('['), "JSON は '[' 始まり");
-        assert!(json.ends_with(']'),  "JSON は ']' 終わり");
-        // 1 音なのでオブジェクトが 1 個含まれる
-        assert_eq!(json.matches("\"note\"").count(), 1);
+        // JSON オブジェクト形式の確認
+        assert!(json.starts_with('{'), "JSON は '{{' 始まり");
+        assert!(json.ends_with('}'),  "JSON は '}}' 終わり");
+        // notes, beats が含まれる
+        assert!(json.contains("\"notes\":["));
+        assert!(json.contains("\"beats\":["));
     }
 
     #[test]

@@ -59,6 +59,7 @@ let renderComplete    = false;
 
 // --- ピアノロール状態 ---
 let notes      = [];
+let beats      = [];
 let duration   = 0;
 let noteHeight = 8;
 let pps        = 120;   // pixels per second
@@ -245,7 +246,9 @@ function loadMidiBytes(bytes, title) {
   try {
     // Rust/Wasm で MIDI 解析 & イベントリスト構築
     const json = player.load(bytes);
-    notes    = JSON.parse(json);
+    const data = JSON.parse(json);
+    notes    = data.notes;
+    beats    = data.beats;
     duration = player.get_duration();
 
     totTimeEl.textContent = fmtTime(duration);
@@ -525,6 +528,7 @@ function drawFrame(ct) {
   if (notes.length === 0) { drawEmpty(W, H); return; }
 
   drawGrid      (W, H, visNotes);
+  drawBeatLines (W, H);
   drawPianoKeys (H, visNotes);
   drawTimeRuler (W);
   drawNotes     (W, H, visNotes, ct);
@@ -554,6 +558,31 @@ function drawGrid(W, H, visNotes) {
       ctx2d.moveTo(PIANO_W, y); ctx2d.lineTo(W, y);
       ctx2d.stroke();
     }
+  }
+}
+
+function drawBeatLines(W, H) {
+  const startSec = scrollX / pps;
+  const endSec   = (scrollX + W - PIANO_W) / pps;
+
+  for (const b of beats) {
+    if (b.time < startSec || b.time > endSec) continue;
+    const x = PIANO_W + b.time * pps - scrollX;
+    if (x < PIANO_W) continue;
+
+    if (b.is_measure) {
+      // 小節の先頭（太めの線）
+      ctx2d.strokeStyle = 'rgba(120, 130, 200, 0.5)';
+      ctx2d.lineWidth = 1.5;
+    } else {
+      // 拍の区切り（細い線）
+      ctx2d.strokeStyle = 'rgba(90, 100, 160, 0.35)'; // 色を濃く、不透明度を上げる
+      ctx2d.lineWidth = 1.0;  // 0.5 -> 1.0 に変更してぼやけを防ぐ
+    }
+    ctx2d.beginPath();
+    ctx2d.moveTo(x, RULER_H);
+    ctx2d.lineTo(x, H);
+    ctx2d.stroke();
   }
 }
 

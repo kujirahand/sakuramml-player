@@ -22,6 +22,12 @@ pub struct NoteEvent {
 }
 
 #[derive(Debug, Clone)]
+pub struct BeatInfo {
+    pub time_sec: f64,
+    pub is_measure: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct MidiControlEvent {
     pub tick: u32,
     pub time_sec: f64,
@@ -40,6 +46,7 @@ pub struct MidiData {
     pub duration_sec: f64,
     /// (tick, マイクロ秒/拍) のリスト (tick 昇順)
     pub tempo_map: Vec<(u32, u32)>,
+    pub beats: Vec<BeatInfo>,
 }
 
 // ─────────────────────────────────────────────
@@ -53,6 +60,7 @@ enum RawEventType {
     ControlChange { channel: u8, controller: u8, value: u8 },
     PitchBend { channel: u8, value: u16 },
     SetTempo { us_per_beat: u32 },
+    TimeSignature { num: u8, denom: u8 },
     Other,
 }
 
@@ -216,6 +224,18 @@ fn handle_meta(
             tick,
             event_type: RawEventType::SetTempo { us_per_beat: us },
         });
+    } else if meta_type == 0x58 && meta_len == 4 {
+        // Time Signature
+        if *offset + 4 > data.len() {
+            return Err("Unexpected end in TimeSignature".into());
+        }
+        let num = data[*offset];
+        let denom_pow = data[*offset + 1];
+        let denom = 1 << denom_pow; // 2^dd
+        events.push(RawEvent {
+            tick,
+            event_type: RawEventType::TimeSignature { num, denom },
+        });
     }
 
     if *offset + meta_len > data.len() {
@@ -355,11 +375,11 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
         offset += track_len;
     }
 
-    // 同一 tick 内: NoteOff → SetTempo → NoteOn の順でソート
     all_events.sort_by(|a, b| {
         let priority = |e: &RawEventType| match e {
             RawEventType::NoteOff { .. } => 0u8,
             RawEventType::SetTempo { .. } => 1,
+            RawEventType::TimeSignature { .. } => 1,
             RawEventType::ProgramChange { .. } => 2,
             RawEventType::ControlChange { .. } => 3,
             RawEventType::PitchBend { .. } => 3,
@@ -494,6 +514,50 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
         .fold(0.0f64, f64::max)
         + 1.5; // 減衰のための末尾余白
 
+    // 拍子・ビートマップ構築
+    let mut ts_map: Vec<(u32, u8, u8)> = vec![(0, 4, 4)];
+    for ev in &all_events {
+        if let RawEventType::TimeSignature { num, denom } = ev.event_type {
+            if ev.tick == 0 {
+                ts_map[0] = (0, num, denom);
+            } else {
+                ts_map.push((ev.tick, num, denom));
+            }
+        }
+    }
+    ts_map.sort_by_key(|&(tick, _, _)| tick);
+
+    let max_tick_from_notes = note_events.iter().map(|n| n.tick + n.duration_tick).max().unwrap_or(0);
+    // マージンを含めた最大の tick
+    let max_tick = max_tick_from_notes + tpq * 8; 
+
+    let mut beats: Vec<BeatInfo> = Vec::new();
+    let mut current_tick = 0;
+    let mut current_measure_beat = 0;
+    let mut ts_idx = 0;
+
+    // tpq = 四分音符あたりのtick数
+    while current_tick <= max_tick {
+        while ts_idx + 1 < ts_map.len() && current_tick >= ts_map[ts_idx + 1].0 {
+            ts_idx += 1;
+            current_measure_beat = 0;
+            current_tick = ts_map[ts_idx].0;
+        }
+
+        let (_, num, denom) = ts_map[ts_idx];
+        let is_measure = current_measure_beat == 0;
+        
+        beats.push(BeatInfo {
+            time_sec: ticks_to_sec(current_tick, &tempo_map, tpq),
+            is_measure,
+        });
+
+        // 1拍あたりの tick (通常 denom=4 なら tpq)。denom=8 なら tpq*4/8 = tpq/2
+        let ticks_per_beat = tpq * 4 / (denom as u32);
+        current_tick += ticks_per_beat;
+        current_measure_beat = (current_measure_beat + 1) % (num as u32);
+    }
+
     Ok(MidiData {
         format,
         ticks_per_quarter: tpq,
@@ -501,6 +565,7 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
         control_events,
         duration_sec,
         tempo_map,
+        beats,
     })
 }
 
@@ -603,6 +668,8 @@ mod tests {
         // テンポトラックにノートはなく、ノートトラックの 1 音だけが含まれる
         assert_eq!(result.notes.len(), 1);
         assert_eq!(result.notes[0].note, 60);
+        // beatsも生成されているはず
+        assert!(!result.beats.is_empty());
     }
 
     // ── タイミング計算 ────────────────────────────
