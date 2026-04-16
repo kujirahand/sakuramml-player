@@ -143,6 +143,37 @@ function setupEvents() {
 
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragStartScrollNote = 0;
+  let dragStartScrollX = 0;
+
+  canvas.addEventListener('mousedown', e => {
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    dragStartScrollNote = scrollNote;
+    dragStartScrollX = scrollX;
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    const dy = e.clientY - dragStartY;
+    const dx = e.clientX - dragStartX;
+
+    // Y方向のドラッグ（上下） -> dyが負（上ドラッグ）の時、scrollNoteを減らして鍵盤を上に移動
+    scrollNote = Math.max(0, Math.min(115, dragStartScrollNote + dy / noteHeight));
+    // X方向のドラッグ（左右） -> dxが負（左ドラッグ）の時、scrollXを増やしてグリッドを左に移動
+    scrollX = Math.max(0, dragStartScrollX - dx);
+
+    if (!isPlaying) drawFrame(getCurrentTime());
+  });
+
+  window.addEventListener('mouseup', () => {
+    isDragging = false;
+  });
+
   rollContainer.addEventListener('dragover', e => {
     e.preventDefault(); dropOverlay.classList.add('active');
   });

@@ -86,6 +86,8 @@ struct Voice {
     phase:   f32,  // 位相 0.0〜1.0
     vel:     f32,  // ベロシティ 0.0〜1.0
 
+    vibrato_phase: f32, // ビブラート用LFO位相
+
     // ── ドラム専用 ────────────────────────────
     is_drum:    bool,
     rng:        RandomXorShift32,  // xorshift32 乱数器の状態
@@ -106,7 +108,7 @@ impl Voice {
     fn new() -> Self {
         Voice {
             active: false, channel: 0, note: 0,
-            freq: 440.0, phase: 0.0, vel: 0.0,
+            freq: 440.0, phase: 0.0, vel: 0.0, vibrato_phase: 0.0,
             is_drum: false, rng: RandomXorShift32::new(1), noise_mix: 0.0, drum_level: 1.0,
             env_state: EnvState::Off, env_val: 0.0, env_samples: 0,
             attack_s: 441, decay_s: 3528, sustain: 0.65, release_s: 11025,
@@ -166,7 +168,7 @@ impl Voice {
     }
 
     /// 1 サンプルを生成して返す。非アクティブなら 0.0。
-    fn tick(&mut self, sr: f32, pb_semitones: f32) -> f32 {
+    fn tick(&mut self, sr: f32, pb_semitones: f32, mod_depth: f32) -> f32 {
         if !self.active { return 0.0; }
 
         // ── エンベロープ更新 ──────────────────────
@@ -215,12 +217,22 @@ impl Voice {
         }
 
         // ── 波形生成 ──────────────────────────────
+        let mut modulated_pb = pb_semitones;
+        if !self.is_drum && mod_depth > 0.0 {
+            // 5 Hz ビブラート LFO
+            self.vibrato_phase += 5.0 / sr;
+            if self.vibrato_phase >= 1.0 { self.vibrato_phase -= 1.0; }
+            let vibrato_val = (self.vibrato_phase * std::f32::consts::PI * 2.0).sin();
+            // mod_depth 1.0 = ±1.0 半音の揺れ
+            modulated_pb += mod_depth * 1.0 * vibrato_val;
+        }
+
         let (wave, scale) = if self.is_drum {
             // xorshift32 ホワイトノイズ
             let noise = self.rng.next_f32_signed();
 
             // トーン成分 (方形波) ― バスドラムやタムのピッチ感
-            let current_freq = self.freq * 2.0_f32.powf(pb_semitones / 12.0);
+            let current_freq = self.freq * 2.0_f32.powf(modulated_pb / 12.0);
             self.phase += current_freq / sr;
             if self.phase >= 1.0 { self.phase -= 1.0; }
             let tone = if self.phase < 0.5 { 1.0f32 } else { -1.0f32 };
@@ -230,7 +242,7 @@ impl Voice {
             (w, self.drum_level * 0.09)
         } else {
             // 方形波
-            let current_freq = self.freq * 2.0_f32.powf(pb_semitones / 12.0);
+            let current_freq = self.freq * 2.0_f32.powf(modulated_pb / 12.0);
             self.phase += current_freq / sr;
             if self.phase >= 1.0 { self.phase -= 1.0; }
             let w = if self.phase < 0.5 { 1.0f32 } else { -1.0f32 };
@@ -315,6 +327,79 @@ impl SimpleReverb {
 }
 
 // ─────────────────────────────────────────────────────────
+// 簡易ステレオコーラス
+// ─────────────────────────────────────────────────────────
+
+struct FractionalDelay {
+    buffer: Vec<f32>,
+    write_pos: usize,
+}
+
+impl FractionalDelay {
+    fn new(size: usize) -> Self {
+        Self { buffer: vec![0.0; size], write_pos: 0 }
+    }
+    fn write(&mut self, val: f32) {
+        self.buffer[self.write_pos] = val;
+        self.write_pos = (self.write_pos + 1) % self.buffer.len();
+    }
+    fn read(&self, delay: f32) -> f32 {
+        let len = self.buffer.len() as f32;
+        let mut read_pos = self.write_pos as f32 - delay;
+        while read_pos < 0.0 { read_pos += len; }
+        
+        let i0 = read_pos as usize % self.buffer.len();
+        let i1 = (i0 + 1) % self.buffer.len();
+        let frac = read_pos - (read_pos as usize) as f32;
+        
+        self.buffer[i0] * (1.0 - frac) + self.buffer[i1] * frac
+    }
+}
+
+struct SimpleChorus {
+    delay_l: FractionalDelay,
+    delay_r: FractionalDelay,
+    lfo_phase: f32,
+    sr: f32,
+}
+
+impl SimpleChorus {
+    fn new(sr: f32) -> Self {
+        let max_delay = (sr * 0.05) as usize; // max 50ms buffer
+        Self {
+            delay_l: FractionalDelay::new(max_delay),
+            delay_r: FractionalDelay::new(max_delay),
+            lfo_phase: 0.0,
+            sr,
+        }
+    }
+    
+    // returns (out_l, out_r)
+    fn process(&mut self, input: f32) -> (f32, f32) {
+        let base_delay = self.sr * 0.015; // 15ms base delay
+        let mod_depth = self.sr * 0.003;  // 3ms depth
+        let lfo_rate = 0.8;               // 0.8 Hz
+        
+        self.lfo_phase += lfo_rate / self.sr;
+        if self.lfo_phase >= 1.0 { self.lfo_phase -= 1.0; }
+        
+        let lfo_val = (self.lfo_phase * std::f32::consts::PI * 2.0).sin();
+        
+        // Anti-phase for stereo width
+        let d_l = base_delay + mod_depth * lfo_val;
+        let d_r = base_delay - mod_depth * lfo_val;
+        
+        let out_l = self.delay_l.read(d_l);
+        let out_r = self.delay_r.read(d_r);
+        
+        self.delay_l.write(input);
+        self.delay_r.write(input);
+        
+        (out_l, out_r)
+    }
+}
+
+// ─────────────────────────────────────────────────────────
 // シンセサイザー (複数ボイス管理)
 // ─────────────────────────────────────────────────────────
 
@@ -323,8 +408,11 @@ pub struct PsgSynth {
     sr:     f32,
     reverb: SimpleReverb,
     reverb_send: [f32; 16],
+    chorus: SimpleChorus,
+    chorus_send: [f32; 16],
     pitch_bend: [f32; 16], // semitones (-2.0 to +2.0)
     pan: [f32; 16],        // 0.0 = left, 0.5 = center, 1.0 = right
+    modulation: [f32; 16], // 0.0 to 1.0
 }
 
 impl PsgSynth {
@@ -334,16 +422,23 @@ impl PsgSynth {
             sr,
             reverb: SimpleReverb::new(sr),
             reverb_send: [0.0; 16],
+            chorus: SimpleChorus::new(sr),
+            chorus_send: [0.0; 16],
             pitch_bend: [0.0; 16],
             pan: [0.5; 16],
+            modulation: [0.0; 16],
         }
     }
 
     pub fn reset(&mut self) {
         for v in &mut self.voices { v.reset(); }
         self.reverb = SimpleReverb::new(self.sr);
+        self.chorus = SimpleChorus::new(self.sr);
         self.pitch_bend = [0.0; 16];
         self.pan = [0.5; 16];
+        self.reverb_send = [0.0; 16];
+        self.chorus_send = [0.0; 16];
+        self.modulation = [0.0; 16];
     }
 
     pub fn note_on(&mut self, ch: u8, note: u8, vel: u8) {
@@ -373,6 +468,16 @@ impl PsgSynth {
         self.reverb_send[ch_idx] = (val as f32) / 127.0;
     }
 
+    pub fn set_chorus_send(&mut self, ch: u8, val: u8) {
+        let ch_idx = (ch & 0x0F) as usize;
+        self.chorus_send[ch_idx] = (val as f32) / 127.0;
+    }
+
+    pub fn set_modulation(&mut self, ch: u8, val: u8) {
+        let ch_idx = (ch & 0x0F) as usize;
+        self.modulation[ch_idx] = (val as f32) / 127.0;
+    }
+
     pub fn set_pitch_bend(&mut self, ch: u8, val: u16) {
         let ch_idx = (ch & 0x0F) as usize;
         // val ranges 0..16383, center is 8192
@@ -392,10 +497,12 @@ impl PsgSynth {
             let mut mix_l = 0.0f32;
             let mut mix_r = 0.0f32;
             let mut rev_in = 0.0f32;
+            let mut chor_in = 0.0f32;
             for v in &mut self.voices {
                 let ch_idx = (v.channel & 0x0F) as usize;
                 let pb = self.pitch_bend[ch_idx];
-                let smp = v.tick(sr, pb);
+                let mod_depth = self.modulation[ch_idx];
+                let smp = v.tick(sr, pb, mod_depth);
                 if smp != 0.0 {
                     let pan = self.pan[ch_idx];
                     let angle = pan * std::f32::consts::PI / 2.0;
@@ -406,14 +513,19 @@ impl PsgSynth {
                     mix_r += smp * r_gain;
                     
                     if v.active {
-                        let send = self.reverb_send[ch_idx];
-                        rev_in += smp * send;
+                        let r_send = self.reverb_send[ch_idx];
+                        rev_in += smp * r_send;
+                        let c_send = self.chorus_send[ch_idx];
+                        chor_in += smp * c_send;
                     }
                 }
             }
             let rev_out = self.reverb.process(rev_in);
-            left_buf[i] = (mix_l + rev_out).clamp(-1.0, 1.0);
-            right_buf[i] = (mix_r + rev_out).clamp(-1.0, 1.0);
+            let (chor_l, chor_r) = self.chorus.process(chor_in);
+            
+            // コーラスは通常ステレオ空間に広げるので、左右の出力を乗せる
+            left_buf[i] = (mix_l + rev_out + chor_l).clamp(-1.0, 1.0);
+            right_buf[i] = (mix_r + rev_out + chor_r).clamp(-1.0, 1.0);
         }
     }
 }

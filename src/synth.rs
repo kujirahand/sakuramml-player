@@ -96,8 +96,12 @@ impl Synth {
         if command == 0xB0 {
             if data1 == 91 {
                 self.psg_synth.set_reverb_send(ch, data2);
+            } else if data1 == 93 {
+                self.psg_synth.set_chorus_send(ch, data2);
             } else if data1 == 10 {
                 self.psg_synth.set_pan(ch, data2);
+            } else if data1 == 1 {
+                self.psg_synth.set_modulation(ch, data2);
             }
         } else if command == 0xE0 {
             let val = ((data2 as u16) << 7) | (data1 as u16);
