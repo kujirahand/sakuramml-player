@@ -4,6 +4,99 @@ use wav_io;
 use sakuramml_player::player::Player;
 use sakuramml_player::soundfont;
 
+#[cfg(not(target_arch = "wasm32"))]
+use rodio::{OutputStream, Sink, Source};
+
+struct PlayerSource {
+    player: Player,
+    current_chunk: std::vec::IntoIter<f32>,
+    sample_rate: u32,
+}
+
+impl PlayerSource {
+    fn new(mut player: Player, sample_rate: u32) -> Self {
+        let chunk = player.render_next(4410); // 0.1s
+        Self {
+            player,
+            current_chunk: chunk.into_iter(),
+            sample_rate,
+        }
+    }
+}
+
+impl Iterator for PlayerSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(sample) = self.current_chunk.next() {
+            return Some(sample);
+        }
+        
+        if self.player.is_render_done() {
+            return None;
+        }
+
+        let chunk = self.player.render_next(4410); // next 0.1s chunk
+        if chunk.is_empty() {
+            return None;
+        }
+        self.current_chunk = chunk.into_iter();
+        self.current_chunk.next()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Source for PlayerSource {
+    fn current_frame_len(&self) -> Option<usize> {
+        Some(4410)
+    }
+
+    fn channels(&self) -> u16 {
+        1
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn play_audio(
+    midi_data: &[u8],
+    sf2_data: Option<&[u8]>
+) -> Result<(), String> {
+    if let Some(data) = sf2_data {
+        if let Err(e) = soundfont::load_soundfont_bytes(data) {
+            eprintln!("SoundFontの解析に失敗しました: {:?}", e);
+        }
+    }
+
+    let sample_rate = 44100.0;
+    let mut player = Player::new(sample_rate);
+    if let Err(e) = player.load(midi_data) {
+        return Err(format!("MIDIの解析に失敗しました: {}", e));
+    }
+
+    let (_stream, stream_handle) = OutputStream::try_default()
+        .map_err(|e| format!("オーディオ出力デバイスの初期化に失敗しました: {}", e))?;
+    
+    let sink = Sink::try_new(&stream_handle)
+        .map_err(|e| format!("Sinkの作成に失敗しました: {}", e))?;
+
+    let source = PlayerSource::new(player, sample_rate as u32);
+    
+    println!("♪ 再生を開始します...");
+    sink.append(source);
+    sink.sleep_until_end();
+    println!("♪ 再生が完了しました。");
+
+    Ok(())
+}
+
 /// MIDI データを WAV ファイルに書き出す
 pub fn convert_midi_to_wav(
     midi_data: &[u8], 
@@ -42,15 +135,17 @@ pub fn convert_midi_to_wav(
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("使い方: {} <input.mid> [output.wav]", args[0]);
+        eprintln!("使い方:");
+        eprintln!("  再生: {} <input.mid or input.mml>", args[0]);
+        eprintln!("  WAV書き出し: {} <input.mid or input.mml> <output.wav>", args[0]);
         std::process::exit(1);
     }
 
     let input_path = &args[1];
     let output_path = if args.len() >= 3 {
-        args[2].clone()
+        Some(args[2].clone())
     } else {
-        format!("{}.wav", input_path)
+        None
     };
 
     println!("SoundFontを読み込んでいます...");
@@ -80,11 +175,29 @@ fn main() {
         midi_data = res.bin;
     }
 
-    println!("WAVファイルに書き出しています: {}", output_path);
-    match convert_midi_to_wav(&midi_data, &output_path, sf2_data.as_deref()) {
-        Ok(_) => println!("完了しました。WAVファイルを保存しました: {}", output_path),
-        Err(e) => {
-            eprintln!("エラー: {}", e);
+    if let Some(out_path) = output_path {
+        println!("WAVファイルに書き出しています: {}", out_path);
+        match convert_midi_to_wav(&midi_data, &out_path, sf2_data.as_deref()) {
+            Ok(_) => println!("完了しました。WAVファイルを保存しました: {}", out_path),
+            Err(e) => {
+                eprintln!("エラー: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match play_audio(&midi_data, sf2_data.as_deref()) {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("再生エラー: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            eprintln!("エラー: WASM環境ではリアルタイム再生はコマンドラインから実行できません。");
             std::process::exit(1);
         }
     }
