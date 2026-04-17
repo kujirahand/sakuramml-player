@@ -5,21 +5,33 @@ use sakuramml_player::player::Player;
 use sakuramml_player::soundfont;
 
 #[cfg(not(target_arch = "wasm32"))]
-use rodio::{OutputStream, Sink, Source};
+use rodio::{
+    cpal::traits::{DeviceTrait, HostTrait},
+    OutputStream,
+    OutputStreamHandle,
+    Sink,
+    Source,
+};
+
+const CLI_CHUNK_DIVISOR: usize = 2;
+const CLI_MIN_CHUNK_FRAMES: usize = 2048;
 
 struct PlayerSource {
     player: Player,
     current_chunk: std::vec::IntoIter<f32>,
     sample_rate: u32,
+    chunk_frames: usize,
 }
 
 impl PlayerSource {
     fn new(mut player: Player, sample_rate: u32) -> Self {
-        let chunk = player.render_next(4410); // 0.1s
+        let chunk_frames = cli_chunk_frames(sample_rate);
+        let chunk = player.render_next(chunk_frames);
         Self {
             player,
             current_chunk: chunk.into_iter(),
             sample_rate,
+            chunk_frames,
         }
     }
 }
@@ -36,7 +48,7 @@ impl Iterator for PlayerSource {
             return None;
         }
 
-        let chunk = self.player.render_next(4410); // next 0.1s chunk
+        let chunk = self.player.render_next(self.chunk_frames);
         if chunk.is_empty() {
             return None;
         }
@@ -48,7 +60,7 @@ impl Iterator for PlayerSource {
 #[cfg(not(target_arch = "wasm32"))]
 impl Source for PlayerSource {
     fn current_frame_len(&self) -> Option<usize> {
-        Some(self.current_chunk.as_slice().len() / 2)
+        None
     }
 
     fn channels(&self) -> u16 {
@@ -62,6 +74,26 @@ impl Source for PlayerSource {
     fn total_duration(&self) -> Option<std::time::Duration> {
         None
     }
+}
+
+fn cli_chunk_frames(sample_rate: u32) -> usize {
+    ((sample_rate as usize) / CLI_CHUNK_DIVISOR).max(CLI_MIN_CHUNK_FRAMES)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn open_output_stream() -> Result<(OutputStream, OutputStreamHandle, u32), String> {
+    let host = rodio::cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| "既定のオーディオ出力デバイスが見つかりません。".to_string())?;
+    let config = device
+        .default_output_config()
+        .map_err(|e| format!("オーディオ出力設定の取得に失敗しました: {}", e))?;
+    let sample_rate = config.sample_rate().0;
+    let (stream, stream_handle) = OutputStream::try_from_device_config(&device, config)
+        .map_err(|e| format!("オーディオ出力デバイスの初期化に失敗しました: {}", e))?;
+
+    Ok((stream, stream_handle, sample_rate))
 }
 
 fn meta_text_type_name(text_type: u8) -> &'static str {
@@ -88,21 +120,19 @@ pub fn play_audio(
         }
     }
 
-    let sample_rate = 44100.0;
+    let (_stream, stream_handle, sample_rate) = open_output_stream()?;
+    let sample_rate = sample_rate as f32;
     let mut player = Player::new(sample_rate);
     if let Err(e) = player.load(midi_data) {
         return Err(format!("MIDIの解析に失敗しました: {}", e));
     }
-
-    let (_stream, stream_handle) = OutputStream::try_default()
-        .map_err(|e| format!("オーディオ出力デバイスの初期化に失敗しました: {}", e))?;
     
     let sink = Sink::try_new(&stream_handle)
         .map_err(|e| format!("Sinkの作成に失敗しました: {}", e))?;
 
     let source = PlayerSource::new(player, sample_rate as u32);
     
-    println!("♪ 再生を開始します...");
+    println!("♪ 再生を開始します... ({} Hz)", sample_rate as u32);
     sink.append(source);
     sink.sleep_until_end();
     println!("♪ 再生が完了しました。");
@@ -287,5 +317,26 @@ mod tests {
 
         // クリーンアップ
         let _ = fs::remove_file(out_path);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_player_source_reports_stable_format_to_rodio() {
+        let midi_data = make_dummy_midi();
+        let mut player = Player::new(48_000.0);
+        player.load(&midi_data).expect("MIDIのロードに失敗しました");
+
+        let source = PlayerSource::new(player, 48_000);
+
+        assert_eq!(Source::channels(&source), 2, "CLI再生はステレオであるべき");
+        assert_eq!(Source::sample_rate(&source), 48_000, "Sourceはデバイスのサンプルレートを使うべき");
+        assert_eq!(Source::current_frame_len(&source), None, "rodioにはフォーマット固定の単一ストリームとして見せるべき");
+    }
+
+    #[test]
+    fn test_cli_chunk_frames_scales_with_sample_rate() {
+        assert_eq!(cli_chunk_frames(44_100), 22_050);
+        assert_eq!(cli_chunk_frames(48_000), 24_000);
+        assert_eq!(cli_chunk_frames(2_000), CLI_MIN_CHUNK_FRAMES);
     }
 }
