@@ -1,0 +1,124 @@
+SoundType={soundfont}
+//------------------------------------------------------------------------------
+曲名{"泥の道"}
+作者{"クジラ飛行机"}
+//------------------------------------------------------------------------------
+TimeBase      = 96
+TimeSignature = 4,4
+Tempo         = 84
+//------------------------------------------------------------------------------
+// Setup
+Str A00 = { CH(01) V=110 v120 l8 o5 q95 REV(070) P(044) 音色(OverdrivenGuitar)  }
+Str B00 = { CH(02) V=110 v123 l8 o3 q90 REV(070) P(084) 音色(OverdrivenGuitar) }
+Str C00 = { CH(03) V=090 v100 l8 o5 q99 REV(080) P(063) 音色(RockOrgan) }
+Str D00 = { CH(04) V=090 v100 l8 o5 q99 REV(050) P(063) 音色(Marimba) }
+Str E00 = { CH(05) V=060 v110 l8 o4 q99 REV(030) P(093) 音色(82)  }
+Str F00 = { CH(06) V=127 v100 l8 o2 q99 REV(020) P(063) 音色(SlapBass1) }
+Str G00 = { CH(10) V=110 v110 l8        REV(080) P(063) @1 }
+//------------------------------------------------------------------------------
+// Drum
+Str G01 = {
+  l24 v100 Sub{ R{ [4  c_h h_h h_h hhh | c_h hhh h_h hhh ] }}
+  l24 v100 Sub{ R{ [4  ___ ___ ___ ___ | ___ ___:___ ___ ] : s_s sss}}
+  l24 v50  Sub{ R{ [4  ___ s_s s_s sss | ___ sss:___ sss ] }}
+  l24 v50  Sub{ R{ [4  __b __b _b_ __b | __b __b _b_ __b ] }}
+  l24 v120      R{ [4  b__ b__ b_b b__ | b__ b__ b_b b_b ] } 
+}
+Str G02 = {
+  l24 Sub{ R{ [4  crr hhh crr hhh | c__ hhh c__ hhh ] }}
+  l24 Sub{ R{ [4  ___ ___ ___ ___ |:___ ___ ___ ___ ] s_s s_s sss sss }}
+  l24      R{ [4  b__ b__ b_b b__ | b__ b__ b_b b_b ] } 
+}
+
+Str G03 = {
+  l24 Sub{ R{ [4  c__ o__ hhh o__ | c__ o__ hhh o__ ] }}
+  l24 Sub{ R{ [4  ___ ___ s__ ___ |:___ ___ s__ s__ ] s_s s_s _ss _ss }}
+  l24      R{ [4  b__ b__ b__ b__ | b__ b__ b__ :b__ ] b__ } 
+}
+
+//------------------------------------------------------------------------------
+// Bass
+Str F01 = {
+  l24o2  [4 e^e e^`e bag e^e | ggg g^g bag a^b ]
+}
+Str F02 = {
+  l24o2 [4 a^^ ^^^ `aaa `aaa | g^g `g^^ ggg ggg ]
+}
+Str F03 = {
+  	l24 o2
+	eee g^e g^e >de^ | ^^^< | eee g^e g^e g^e |
+	e^`e e^`e g^>g< bag | >ggg fff eee< ged |
+	e^`e e^`e >ded e<ee | eee ggg gee gee |
+	bag bag bgb aaa | e^`e e^`e gab bbb
+}
+//------------------------------------------------------------------------------
+// Marinba
+Str D01 = {
+  Sub{ v110 o4 l24 [4 ere eee ree ree | ree ere ere eee ] }
+       v110 o3 l24 [4 ere eee ree ree | ree ere ere eee ]
+}
+//------------------------------------------------------------------------------
+// Wave
+Str E = { o4 'eg>eb<' }
+Str F = { o4 'fa>fa<' }
+Str G = { o4 'gb>dg<' }
+Str E01 = {
+	l24 q50
+  	v100 [4 E r E | r E F | E r E | E F E || G r G | r G G | G r G | E F G ]
+}
+//------------------------------------------------------------------------------
+// Melody
+Str A01 = {
+	l24 o3 q90
+	Unison5th{
+		[2
+			q90 b^^ ^^a e^^ ^^^ | g^^ ^^^ a^^ q60 ggg
+			q90 b^^ ^^a e^^ ^^^ |:g^^ b^^ bag agf
+		]
+			e^^ f^^ g^^ q60 ggg
+	}
+}
+Str A02 = {
+	l24 o3 q90
+	Unison5th{
+		[2
+			q90 a^^ ^^^ ^^^ ^^^ | q60 ggg ggg ggg ggg
+			q90 a^^ ^^^ ^^^ ^^^ | q60 ggg ggg ggg ggg
+		]
+	}
+}
+//------------------------------------------------------------------------------
+// Solo
+Str B01 = {
+	l24 o5 q99
+	ega ge^ ded< bg^ | gede gag agb >de^ | ^^^ ^^d b>cd< b>cd< | g^^ f^^ ed^
+    >ded e^^ d^^ b<ba | gag aga ba^ ^^^ | ^^g fe^ e^^ de^^ | e^^ ^^^ ^^^ ^^^
+}
+
+//------------------------------------------------------------------------------
+// Play
+//------------------------------------------------------------------------------
+Str ___ = { l1 rrrr }
+Str RRR = { l1 rr }
+ResetGM;
+PLAY(A00,B00,C00,D00,E00,F00,G00)
+?
+// Intro
+PLAY(A01,___,___,___,E01,___,___)
+PLAY(A01,___,___,D01,E01,___,G01)
+// A-mero
+PLAY(A01,A01,C01,D01,E01,F01,G01)
+// B-mero
+PLAY(A02,A02,C01,D01,E01,F02,G02)
+// A-mero
+PLAY(A01,A01,__,___,___,F01,G01)
+// B-mero
+PLAY(A02,A02,C01,D01,E01,F02,G02)
+// C-mero
+PLAY(A02,B01,C01,D01,E01,F01,G02)
+// D-mero
+PLAY(A02,___,C01,D01,E01,F03,G03)
+// A-melo
+PLAY(A01,A01,C01,D01,E01,F01,G01)
+PLAY(A01,A01,C01,D01,E01,F01,G01)
+PLAY({o3'eb'1},{o3'eb'1},{},{},{},{o2e1}, {R{'cb'}})
