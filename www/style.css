@@ -321,6 +321,23 @@ body {
   justify-content: flex-end;
 }
 
+.mml-log {
+  width: 30%;
+  background: rgba(20, 20, 46, 0.7);
+  border: 1px solid var(--border);
+  border-radius: var(--card-r);
+  color: #ff8e8e;
+  padding: 12px;
+  font-family: 'Inter', monospace;
+  font-size: 0.8rem;
+  resize: none;
+  outline: none;
+  white-space: pre-wrap;
+}
+.mml-log.success {
+  color: #6ee7b7;
+}
+
 /* ── ピアノロール ────────────────────────── */
 .roll-container {
   flex: 1;

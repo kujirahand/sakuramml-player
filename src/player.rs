@@ -79,7 +79,7 @@ impl Player {
 
     pub fn load(&mut self, data: &[u8]) -> Result<String, String> {
         let midi = parse(data)?;
-        let json = Self::data_to_json(&midi.notes, &midi.beats);
+        let json = Self::data_to_json(&midi.notes, &midi.beats, &midi.texts);
 
         // サンプル単位のイベントリストを構築
         let sr = self.sr as f64;
@@ -115,8 +115,8 @@ impl Player {
 
     pub fn get_note_events_json(&self) -> String {
         match &self.midi_data {
-            Some(d) => Self::data_to_json(&d.notes, &d.beats),
-            None    => r#"{"notes":[],"beats":[]}"#.to_string(),
+            Some(d) => Self::data_to_json(&d.notes, &d.beats, &d.texts),
+            None    => r#"{"notes":[],"beats":[],"texts":[]}"#.to_string(),
         }
     }
 
@@ -226,7 +226,7 @@ impl Player {
         self.synth.reset();
     }
 
-    fn data_to_json(notes: &[NoteEvent], beats: &[crate::midi_parser::BeatInfo]) -> String {
+    fn data_to_json(notes: &[NoteEvent], beats: &[crate::midi_parser::BeatInfo], texts: &[crate::midi_parser::MidiTextEvent]) -> String {
         let note_items: Vec<String> = notes.iter().map(|n| {
             format!(
                 r#"{{"tick":{tick},"time":{time:.4},"ch":{ch},"note":{note},"vel":{vel},"dur":{dur:.4}}}"#,
@@ -245,10 +245,21 @@ impl Player {
                 measure = if b.is_measure { "true" } else { "false" }
             )
         }).collect();
+        let text_items: Vec<String> = texts.iter().map(|t| {
+            // エスケープ処理 (簡易的)
+            let safe_text = t.text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r");
+            format!(
+                r#"{{"time":{time:.4},"type":{ttype},"text":"{text}"}}"#,
+                time = t.time_sec,
+                ttype = t.text_type,
+                text = safe_text
+            )
+        }).collect();
         format!(
-            r#"{{"notes":[{notes}],"beats":[{beats}]}}"#,
+            r#"{{"notes":[{notes}],"beats":[{beats}],"texts":[{texts}]}}"#,
             notes = note_items.join(","),
-            beats = beat_items.join(",")
+            beats = beat_items.join(","),
+            texts = text_items.join(",")
         )
     }
 }

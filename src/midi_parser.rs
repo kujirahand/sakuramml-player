@@ -37,12 +37,21 @@ pub struct MidiControlEvent {
     pub data2: u8,
 }
 
+#[derive(Debug, Clone)]
+pub struct MidiTextEvent {
+    pub tick: u32,
+    pub time_sec: f64,
+    pub text_type: u8, // 0x01=Text, 0x05=Lyric, 0x06=Marker
+    pub text: String,
+}
+
 #[allow(dead_code)]
 pub struct MidiData {
     pub format: u16,
     pub ticks_per_quarter: u32,
     pub notes: Vec<NoteEvent>,
     pub control_events: Vec<MidiControlEvent>,
+    pub texts: Vec<MidiTextEvent>,
     pub duration_sec: f64,
     /// (tick, マイクロ秒/拍) のリスト (tick 昇順)
     pub tempo_map: Vec<(u32, u32)>,
@@ -61,6 +70,7 @@ enum RawEventType {
     PitchBend { channel: u8, value: u16 },
     SetTempo { us_per_beat: u32 },
     TimeSignature { num: u8, denom: u8 },
+    Text { text_type: u8, text_bytes: Vec<u8> },
     Other,
 }
 
@@ -236,6 +246,17 @@ fn handle_meta(
             tick,
             event_type: RawEventType::TimeSignature { num, denom },
         });
+    } else if (0x01..=0x07).contains(&meta_type) {
+        // Text, Lyric, or Marker
+        let mut text_bytes = vec![0; meta_len];
+        if *offset + meta_len > data.len() {
+            return Err("Unexpected end in Text/Lyric/Marker".into());
+        }
+        text_bytes.copy_from_slice(&data[*offset..*offset + meta_len]);
+        events.push(RawEvent {
+            tick,
+            event_type: RawEventType::Text { text_type: meta_type, text_bytes },
+        });
     }
 
     if *offset + meta_len > data.len() {
@@ -384,7 +405,8 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
             RawEventType::ControlChange { .. } => 3,
             RawEventType::PitchBend { .. } => 3,
             RawEventType::NoteOn { .. } => 4,
-            RawEventType::Other => 5,
+            RawEventType::Text { .. } => 5,
+            RawEventType::Other => 6,
         };
         a.tick
             .cmp(&b.tick)
@@ -409,6 +431,7 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
     let mut pending: HashMap<(u8, u8), Vec<(u32, u8, u8, u8)>> = HashMap::new();
     let mut note_events: Vec<NoteEvent> = Vec::new();
     let mut control_events: Vec<MidiControlEvent> = Vec::new();
+    let mut texts: Vec<MidiTextEvent> = Vec::new();
     
     let mut current_bank = [0u8; 16];
     let mut current_program = [0u8; 16];
@@ -483,6 +506,23 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
                         });
                     }
                 }
+            }
+            RawEventType::Text { text_type, text_bytes } => {
+                let mut text = match std::str::from_utf8(text_bytes) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => {
+                        let (cow, _, _) = encoding_rs::SHIFT_JIS.decode(text_bytes);
+                        cow.into_owned()
+                    }
+                };
+                text = text.trim_matches(char::from(0)).to_string(); // Remove null terminators
+                
+                texts.push(MidiTextEvent {
+                    tick: ev.tick,
+                    time_sec: ticks_to_sec(ev.tick, &tempo_map, tpq),
+                    text_type: *text_type,
+                    text,
+                });
             }
             _ => {}
         }
@@ -563,6 +603,7 @@ pub fn parse(data: &[u8]) -> Result<MidiData, String> {
         ticks_per_quarter: tpq,
         notes: note_events,
         control_events,
+        texts,
         duration_sec,
         tempo_map,
         beats,

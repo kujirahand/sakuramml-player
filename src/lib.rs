@@ -90,11 +90,33 @@ impl MidiPlayer {
     }
 }
 
-/// MMLテキストをMIDIバイト列(Uint8Array)にコンパイルする
+/// MMLテキストをMIDIバイト列(Uint8Array)とログ文字列にコンパイルする
 #[wasm_bindgen]
-pub fn compile_mml(source: &str) -> Vec<u8> {
+pub struct CompileResult {
+    bin: Vec<u8>,
+    log: String,
+}
+
+#[wasm_bindgen]
+impl CompileResult {
+    #[wasm_bindgen(getter)]
+    pub fn bin(&self) -> Vec<u8> {
+        self.bin.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn log(&self) -> String {
+        self.log.clone()
+    }
+}
+
+#[wasm_bindgen]
+pub fn compile_mml(source: &str) -> CompileResult {
     let res = sakuramml::compile(source, sakuramml::SAKURA_DEBUG_NONE);
-    res.bin
+    CompileResult {
+        bin: res.bin,
+        log: res.log,
+    }
 }
 
 /// Shift_JISの可能性があるバイト列をUTF-8文字列に変換する

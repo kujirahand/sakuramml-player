@@ -175,6 +175,19 @@ fn main() {
         midi_data = res.bin;
     }
 
+    if let Ok(midi) = sakuramml_player::midi_parser::parse(&midi_data) {
+        println!("Extracted Texts: {:?}", midi.texts);
+    }
+    
+    // Dump all raw meta events (using hacky search)
+    for i in 0..midi_data.len() - 2 {
+        if midi_data[i] == 0xFF {
+            let meta_type = midi_data[i+1];
+            let meta_len = midi_data[i+2];
+            println!("Meta Event: type={}, len={}", meta_type, meta_len);
+        }
+    }
+
     if let Some(out_path) = output_path {
         println!("WAVファイルに書き出しています: {}", out_path);
         match convert_midi_to_wav(&midi_data, &out_path, sf2_data.as_deref()) {
