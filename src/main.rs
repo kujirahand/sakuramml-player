@@ -48,11 +48,11 @@ impl Iterator for PlayerSource {
 #[cfg(not(target_arch = "wasm32"))]
 impl Source for PlayerSource {
     fn current_frame_len(&self) -> Option<usize> {
-        Some(4410)
+        Some(self.current_chunk.as_slice().len() / 2)
     }
 
     fn channels(&self) -> u16 {
-        1
+        2
     }
 
     fn sample_rate(&self) -> u32 {
@@ -61,6 +61,19 @@ impl Source for PlayerSource {
 
     fn total_duration(&self) -> Option<std::time::Duration> {
         None
+    }
+}
+
+fn meta_text_type_name(text_type: u8) -> &'static str {
+    match text_type {
+        0x01 => "Text",
+        0x02 => "Copyright",
+        0x03 => "TrackName",
+        0x04 => "InstrumentName",
+        0x05 => "Lyric",
+        0x06 => "Marker",
+        0x07 => "CuePoint",
+        _ => "Unknown",
     }
 }
 
@@ -118,7 +131,7 @@ pub fn convert_midi_to_wav(
     let total_samples = player.get_total_samples();
     let samples = player.render_next(total_samples as usize);
 
-    let mut head = wav_io::new_mono_header();
+    let mut head = wav_io::new_stereo_header();
     head.sample_rate = sample_rate as u32;
     head.sample_format = wav_io::header::SampleFormat::Float;
     head.bits_per_sample = 32;
@@ -176,7 +189,17 @@ fn main() {
     }
 
     if let Ok(midi) = sakuramml_player::midi_parser::parse(&midi_data) {
-        println!("Extracted Texts: {:?}", midi.texts);
+        if !midi.texts.is_empty() {
+            println!("MetaText:");
+            for text in &midi.texts {
+                println!(
+                    "  [{:.3}s] {}: {}",
+                    text.time_sec,
+                    meta_text_type_name(text.text_type),
+                    text.text
+                );
+            }
+        }
     }
     
     // Dump all raw meta events (using hacky search)
@@ -260,6 +283,7 @@ mod tests {
         // ヘッダー確認 (RIFF, WAVE)
         assert_eq!(&wav_data[0..4], b"RIFF");
         assert_eq!(&wav_data[8..12], b"WAVE");
+        assert_eq!(u16::from_le_bytes([wav_data[22], wav_data[23]]), 2, "WAVはステレオで出力されるべき");
 
         // クリーンアップ
         let _ = fs::remove_file(out_path);
