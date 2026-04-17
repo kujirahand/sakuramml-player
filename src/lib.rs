@@ -119,9 +119,14 @@ pub fn compile_mml(source: &str) -> CompileResult {
     }
 }
 
-/// Shift_JISの可能性があるバイト列をUTF-8文字列に変換する
+/// 文字コードを正規化したMMLバイト列をMIDIバイト列(Uint8Array)とログ文字列にコンパイルする
 #[wasm_bindgen]
-pub fn encoding_to_utf8(data: &[u8]) -> String {
+pub fn compile_mml_bytes(data: &[u8]) -> CompileResult {
+    let text = decode_text_bytes(data);
+    compile_mml(&text)
+}
+
+fn decode_text_bytes(data: &[u8]) -> String {
     // UTF-8として正常に解釈できるか確認
     if let Ok(s) = std::str::from_utf8(data) {
         return s.to_string();
@@ -129,4 +134,46 @@ pub fn encoding_to_utf8(data: &[u8]) -> String {
     // UTF-8でなければShift_JISとみなしてデコード
     let (cow, _encoding_used, _had_errors) = encoding_rs::SHIFT_JIS.decode(data);
     cow.into_owned()
+}
+
+/// Shift_JISの可能性があるバイト列をUTF-8文字列に変換する
+#[wasm_bindgen]
+pub fn encoding_to_utf8(data: &[u8]) -> String {
+    decode_text_bytes(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encoding_to_utf8_decodes_shift_jis_mml() {
+        let bytes = include_bytes!("../samples/bbs6-2386.mml");
+        let text = encoding_to_utf8(bytes);
+
+        assert!(text.contains("クジラ屋の飴玉"));
+        assert!(text.contains("TrackName = {\"クジラ屋の飴玉\"}"));
+    }
+
+    #[test]
+    fn test_compile_mml_bytes_preserves_meta_text() {
+        let bytes = include_bytes!("../samples/bbs6-2386.mml");
+        let result = compile_mml_bytes(bytes);
+        assert!(!result.bin.is_empty(), "MMLのコンパイル結果が空です");
+
+        let midi = crate::midi_parser::parse(&result.bin).expect("compiled MIDI should parse");
+        let track_name = midi
+            .texts
+            .iter()
+            .find(|text| text.text_type == 0x03)
+            .map(|text| text.text.as_str());
+        let copyright = midi
+            .texts
+            .iter()
+            .find(|text| text.text_type == 0x02)
+            .map(|text| text.text.as_str());
+
+        assert_eq!(track_name, Some("\"クジラ屋の飴玉\""));
+        assert_eq!(copyright, Some("\"クジラ飛行机\""));
+    }
 }

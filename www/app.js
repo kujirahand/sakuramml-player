@@ -12,7 +12,7 @@
  * 5. シークは stopAllChunks() → seek_to() → pumpChunks() のリセット
  */
 
-import init, { MidiPlayer, load_soundfont, compile_mml, encoding_to_utf8 } from './pkg/sakuramml_player.js?v=2';
+import init, { MidiPlayer, load_soundfont, compile_mml, compile_mml_bytes, encoding_to_utf8 } from './pkg/sakuramml_player.js?v=2';
 
 // ─────────────────────────────────────────────────────────
 // 定数
@@ -271,14 +271,14 @@ async function loadFile(file) {
 
   try {
     if (isMml) {
-      console.log('[loadFile] Reading MML file as ArrayBuffer for encoding_to_utf8');
+      console.log('[loadFile] Reading MML file as ArrayBuffer for UTF-8 normalization before compile');
       const fileBytes = new Uint8Array(await file.arrayBuffer());
       const text = encoding_to_utf8(fileBytes);
       console.log('[loadFile] Text read length:', text.length);
       mmlInput.value = text;
       localStorage.setItem('mml', text);
       mmlDirty = false;
-      const res = compile_mml(text);
+      const res = compile_mml_bytes(fileBytes);
       const bytes = res.bin;
       setCompileLog(res.log);
 

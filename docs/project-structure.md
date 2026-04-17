@@ -76,17 +76,16 @@
   このファイルです。
 - `docs/architecture.md`
   システム構成とデータフローの説明です。
+- `docs/cli-audio-noise.md`
+  CLI 再生ノイズ調査の記録です。
+- `docs/cli-playback-lessons.md`
+  CLI 再生の設計判断と学びの整理です。
 - `docs/midi.md`
   MIDI のテキストイベントや文字コード処理で得られた知見です。
 
 ## サンプル / テスト用データ
 
-- `test.mid`
-- `test.mml`
-- `lyric-test.mml`
-- `bbs6-2386.mml`
-- `test3.mml`
-- `test4.mml`
+曲データが、`sameples/` フォルダに入っています。
 
 読み込みや再生の確認に使えるサンプルです。
 

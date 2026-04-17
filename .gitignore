@@ -1,5 +1,9 @@
+#
+# .gitignore
+#
+
 # WAV files
-*.wav
+**/*.wav
 
 # .DS_Store
 **/.DS_Store

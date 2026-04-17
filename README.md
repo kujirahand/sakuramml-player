@@ -17,6 +17,8 @@
 - [プロジェクト構成](docs/project-structure.md)
 - [アーキテクチャ](docs/architecture.md)
 - [MIDI テキストイベントの知見](docs/midi.md)
+- [CLI 再生ノイズ調査メモ](docs/cli-audio-noise.md)
+- [CLI 再生まわりの学び](docs/cli-playback-lessons.md)
 
 ## クイックスタート
 
@@ -31,16 +33,22 @@
 
 ### CLI 版
 
-再生:
+ストリーム再生:
 
 ```bash
 cargo run --bin sakuramml-player -- test.mid
 ```
 
-MML を直接再生:
+MML を直接ストリーム再生:
 
 ```bash
 cargo run --bin sakuramml-player -- test.mml
+```
+
+全曲を先にレンダリングしてから再生:
+
+```bash
+cargo run --bin sakuramml-player -- --render-all test.mid
 ```
 
 WAV 書き出し:
@@ -48,6 +56,14 @@ WAV 書き出し:
 ```bash
 cargo run --bin sakuramml-player -- test.mid output.wav
 ```
+
+ヘルプ表示:
+
+```bash
+cargo run --bin sakuramml-player -- --help
+```
+
+CLI 再生モードの設計判断や調査経緯は [docs/cli-audio-noise.md](docs/cli-audio-noise.md) と [docs/cli-playback-lessons.md](docs/cli-playback-lessons.md) にまとめています。
 
 ## 開発の前提
 
@@ -64,7 +80,3 @@ cargo run --bin sakuramml-player -- test.mid output.wav
 - `www/app.js` で UI、ファイル読込、再生制御、描画を実装
 - `www/audio-worklet-processor.js` は将来のリアルタイム DSP 用スケルトン
 
-## 注意
-
-- リポジトリには検証用の `test.mid` / `test.mml` / `lyric-test.mml` などが含まれています。
-- `src/scratch.rs`、`src/test2.rs`、`src/bin/` 配下には試験用コードや調査用バイナリが含まれています。

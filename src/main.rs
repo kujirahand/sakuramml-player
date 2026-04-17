@@ -1,11 +1,18 @@
 use std::env;
 use std::fs;
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    collections::VecDeque,
+    sync::mpsc::{self, Receiver},
+    thread,
+};
 use wav_io;
 use sakuramml_player::player::Player;
 use sakuramml_player::soundfont;
 
 #[cfg(not(target_arch = "wasm32"))]
 use rodio::{
+    buffer::SamplesBuffer,
     cpal::traits::{DeviceTrait, HostTrait},
     OutputStream,
     OutputStreamHandle,
@@ -13,47 +20,99 @@ use rodio::{
     Source,
 };
 
-const CLI_CHUNK_DIVISOR: usize = 2;
-const CLI_MIN_CHUNK_FRAMES: usize = 2048;
+#[cfg(not(target_arch = "wasm32"))]
+const STREAM_CHUNK_MILLIS: u32 = 250;
 
-struct PlayerSource {
-    player: Player,
-    current_chunk: std::vec::IntoIter<f32>,
-    sample_rate: u32,
-    chunk_frames: usize,
+#[cfg(not(target_arch = "wasm32"))]
+const STREAM_BUFFERED_CHUNKS: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlaybackMode {
+    Stream,
+    RenderAll,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct CliOptions {
+    input_path: String,
+    output_path: Option<String>,
+    playback_mode: PlaybackMode,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PlayerSource {
+    current_chunk: VecDeque<f32>,
+    chunk_rx: Receiver<Option<Vec<f32>>>,
+    sample_rate: u32,
+    finished: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl PlayerSource {
     fn new(mut player: Player, sample_rate: u32) -> Self {
-        let chunk_frames = cli_chunk_frames(sample_rate);
-        let chunk = player.render_next(chunk_frames);
+        let chunk_frames = stream_chunk_frames(sample_rate);
+        let first_chunk = player.render_next(chunk_frames);
+        let (tx, rx) = mpsc::sync_channel(STREAM_BUFFERED_CHUNKS);
+
+        thread::spawn(move || {
+            loop {
+                if player.is_render_done() {
+                    let _ = tx.send(None);
+                    break;
+                }
+
+                let chunk = player.render_next(chunk_frames);
+                if chunk.is_empty() {
+                    let _ = tx.send(None);
+                    break;
+                }
+
+                if tx.send(Some(chunk)).is_err() {
+                    break;
+                }
+            }
+        });
+
         Self {
-            player,
-            current_chunk: chunk.into_iter(),
+            current_chunk: VecDeque::from(first_chunk),
+            chunk_rx: rx,
             sample_rate,
-            chunk_frames,
+            finished: false,
+        }
+    }
+
+    fn refill_chunk(&mut self) -> bool {
+        if self.finished {
+            return false;
+        }
+
+        match self.chunk_rx.recv() {
+            Ok(Some(chunk)) => {
+                self.current_chunk = VecDeque::from(chunk);
+                true
+            }
+            Ok(None) | Err(_) => {
+                self.finished = true;
+                false
+            }
         }
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Iterator for PlayerSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(sample) = self.current_chunk.next() {
-            return Some(sample);
-        }
-        
-        if self.player.is_render_done() {
-            return None;
-        }
+        loop {
+            if let Some(sample) = self.current_chunk.pop_front() {
+                return Some(sample);
+            }
 
-        let chunk = self.player.render_next(self.chunk_frames);
-        if chunk.is_empty() {
-            return None;
+            if !self.refill_chunk() {
+                return None;
+            }
         }
-        self.current_chunk = chunk.into_iter();
-        self.current_chunk.next()
     }
 }
 
@@ -76,10 +135,6 @@ impl Source for PlayerSource {
     }
 }
 
-fn cli_chunk_frames(sample_rate: u32) -> usize {
-    ((sample_rate as usize) / CLI_CHUNK_DIVISOR).max(CLI_MIN_CHUNK_FRAMES)
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn open_output_stream() -> Result<(OutputStream, OutputStreamHandle, u32), String> {
     let host = rodio::cpal::default_host();
@@ -96,6 +151,71 @@ fn open_output_stream() -> Result<(OutputStream, OutputStreamHandle, u32), Strin
     Ok((stream, stream_handle, sample_rate))
 }
 
+fn load_player(midi_data: &[u8], sf2_data: Option<&[u8]>, sample_rate: f32) -> Result<Player, String> {
+    if let Some(data) = sf2_data {
+        if let Err(e) = soundfont::load_soundfont_bytes(data) {
+            eprintln!("SoundFontの解析に失敗しました: {:?}", e);
+        }
+    }
+
+    let mut player = Player::new(sample_rate);
+    if let Err(e) = player.load(midi_data) {
+        return Err(format!("MIDIの解析に失敗しました: {}", e));
+    }
+
+    Ok(player)
+}
+
+fn render_all_samples(mut player: Player) -> Vec<f32> {
+    let total_samples = player.get_total_samples();
+    player.render_next(total_samples)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn stream_chunk_frames(sample_rate: u32) -> usize {
+    ((sample_rate as usize) * (STREAM_CHUNK_MILLIS as usize) / 1000).max(1)
+}
+
+fn parse_cli_args(args: &[String]) -> Result<CliOptions, String> {
+    let mut playback_mode = PlaybackMode::Stream;
+    let mut positional = Vec::new();
+
+    for arg in args.iter().skip(1) {
+        match arg.as_str() {
+            "--render-all" => playback_mode = PlaybackMode::RenderAll,
+            _ if arg.starts_with('-') => {
+                return Err(format!("不明なオプションです: {}", arg));
+            }
+            _ => positional.push(arg.clone()),
+        }
+    }
+
+    match positional.len() {
+        0 => Err("入力ファイルを指定してください。".to_string()),
+        1 => Ok(CliOptions {
+            input_path: positional[0].clone(),
+            output_path: None,
+            playback_mode,
+        }),
+        2 => Ok(CliOptions {
+            input_path: positional[0].clone(),
+            output_path: Some(positional[1].clone()),
+            playback_mode,
+        }),
+        _ => Err("引数が多すぎます。入力ファイルと出力ファイルまで指定できます。".to_string()),
+    }
+}
+
+fn help_text(program: &str) -> String {
+    format!(
+        "使い方:\n  ストリーム再生: {program} <input.mid or input.mml>\n  全曲レンダリング再生: {program} --render-all <input.mid or input.mml>\n  WAV書き出し: {program} <input.mid or input.mml> <output.wav>\n\nオプション:\n  --render-all  再生前に曲全体をレンダリングしてから再生します\n  --help, -h    このヘルプを表示します"
+    )
+}
+
+fn print_help(program: &str) {
+    println!("{}", help_text(program));
+}
+
 fn meta_text_type_name(text_type: u8) -> &'static str {
     match text_type {
         0x01 => "Text",
@@ -110,30 +230,31 @@ fn meta_text_type_name(text_type: u8) -> &'static str {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn play_audio(
+fn play_audio(
     midi_data: &[u8],
-    sf2_data: Option<&[u8]>
+    sf2_data: Option<&[u8]>,
+    playback_mode: PlaybackMode,
 ) -> Result<(), String> {
-    if let Some(data) = sf2_data {
-        if let Err(e) = soundfont::load_soundfont_bytes(data) {
-            eprintln!("SoundFontの解析に失敗しました: {:?}", e);
-        }
-    }
-
     let (_stream, stream_handle, sample_rate) = open_output_stream()?;
     let sample_rate = sample_rate as f32;
-    let mut player = Player::new(sample_rate);
-    if let Err(e) = player.load(midi_data) {
-        return Err(format!("MIDIの解析に失敗しました: {}", e));
-    }
+    let player = load_player(midi_data, sf2_data, sample_rate)?;
     
     let sink = Sink::try_new(&stream_handle)
         .map_err(|e| format!("Sinkの作成に失敗しました: {}", e))?;
 
-    let source = PlayerSource::new(player, sample_rate as u32);
-    
-    println!("♪ 再生を開始します... ({} Hz)", sample_rate as u32);
-    sink.append(source);
+    match playback_mode {
+        PlaybackMode::Stream => {
+            println!("♪ ストリーム再生を開始します... ({} Hz)", sample_rate as u32);
+            sink.append(PlayerSource::new(player, sample_rate as u32));
+        }
+        PlaybackMode::RenderAll => {
+            println!("♪ 音声を準備しています... ({} Hz)", sample_rate as u32);
+            let samples = render_all_samples(player);
+            println!("♪ 全曲レンダリング後に再生します... ({} Hz)", sample_rate as u32);
+            sink.append(SamplesBuffer::new(2, sample_rate as u32, samples));
+        }
+    }
+
     sink.sleep_until_end();
     println!("♪ 再生が完了しました。");
 
@@ -141,25 +262,14 @@ pub fn play_audio(
 }
 
 /// MIDI データを WAV ファイルに書き出す
-pub fn convert_midi_to_wav(
+fn convert_midi_to_wav(
     midi_data: &[u8], 
     output_path: &str, 
     sf2_data: Option<&[u8]>
 ) -> Result<(), String> {
-    if let Some(data) = sf2_data {
-        if let Err(e) = soundfont::load_soundfont_bytes(data) {
-            eprintln!("SoundFontの解析に失敗しました: {:?}", e);
-        }
-    }
-
     let sample_rate = 44100.0;
-    let mut player = Player::new(sample_rate);
-    if let Err(e) = player.load(midi_data) {
-        return Err(format!("MIDIの解析に失敗しました: {}", e));
-    }
-
-    let total_samples = player.get_total_samples();
-    let samples = player.render_next(total_samples as usize);
+    let player = load_player(midi_data, sf2_data, sample_rate)?;
+    let samples = render_all_samples(player);
 
     let mut head = wav_io::new_stereo_header();
     head.sample_rate = sample_rate as u32;
@@ -177,19 +287,27 @@ pub fn convert_midi_to_wav(
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_help(&args[0]);
+        return;
+    }
+
     if args.len() < 2 {
-        eprintln!("使い方:");
-        eprintln!("  再生: {} <input.mid or input.mml>", args[0]);
-        eprintln!("  WAV書き出し: {} <input.mid or input.mml> <output.wav>", args[0]);
+        print_help(&args[0]);
         std::process::exit(1);
     }
 
-    let input_path = &args[1];
-    let output_path = if args.len() >= 3 {
-        Some(args[2].clone())
-    } else {
-        None
+    let options = match parse_cli_args(&args) {
+        Ok(options) => options,
+        Err(e) => {
+            eprintln!("{}", e);
+            print_help(&args[0]);
+            std::process::exit(1);
+        }
     };
+
+    let input_path = &options.input_path;
+    let output_path = options.output_path.clone();
 
     println!("SoundFontを読み込んでいます...");
     let sf2_path = "www/fonts/TimGM6mb.sf2";
@@ -213,9 +331,8 @@ fn main() {
 
     if input_path.to_lowercase().ends_with(".mml") {
         println!("MMLをコンパイルしています...");
-        let mml_text = String::from_utf8_lossy(&midi_data).to_string();
-        let res = sakuramml::compile(&mml_text, sakuramml::SAKURA_DEBUG_NONE);
-        midi_data = res.bin;
+        let res = sakuramml_player::compile_mml_bytes(&midi_data);
+        midi_data = res.bin();
     }
 
     if let Ok(midi) = sakuramml_player::midi_parser::parse(&midi_data) {
@@ -253,7 +370,7 @@ fn main() {
     } else {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            match play_audio(&midi_data, sf2_data.as_deref()) {
+            match play_audio(&midi_data, sf2_data.as_deref(), options.playback_mode) {
                 Ok(_) => {},
                 Err(e) => {
                     eprintln!("再生エラー: {}", e);
@@ -319,24 +436,46 @@ mod tests {
         let _ = fs::remove_file(out_path);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn test_player_source_reports_stable_format_to_rodio() {
+    fn test_render_all_samples_matches_player_total() {
         let midi_data = make_dummy_midi();
-        let mut player = Player::new(48_000.0);
-        player.load(&midi_data).expect("MIDIのロードに失敗しました");
+        let player = load_player(&midi_data, None, 44_100.0).expect("MIDIのロードに失敗しました");
+        let total_samples = player.get_total_samples();
+        let samples = render_all_samples(player);
 
-        let source = PlayerSource::new(player, 48_000);
-
-        assert_eq!(Source::channels(&source), 2, "CLI再生はステレオであるべき");
-        assert_eq!(Source::sample_rate(&source), 48_000, "Sourceはデバイスのサンプルレートを使うべき");
-        assert_eq!(Source::current_frame_len(&source), None, "rodioにはフォーマット固定の単一ストリームとして見せるべき");
+        assert_eq!(samples.len(), total_samples * 2, "全曲レンダリングはステレオPCM長と一致するべき");
     }
 
     #[test]
-    fn test_cli_chunk_frames_scales_with_sample_rate() {
-        assert_eq!(cli_chunk_frames(44_100), 22_050);
-        assert_eq!(cli_chunk_frames(48_000), 24_000);
-        assert_eq!(cli_chunk_frames(2_000), CLI_MIN_CHUNK_FRAMES);
+    fn test_parse_cli_args_defaults_to_stream_playback() {
+        let args = vec!["app".to_string(), "test.mid".to_string()];
+        let options = parse_cli_args(&args).expect("引数解析に失敗しました");
+
+        assert_eq!(options.playback_mode, PlaybackMode::Stream);
+        assert_eq!(options.input_path, "test.mid");
+        assert_eq!(options.output_path, None);
+    }
+
+    #[test]
+    fn test_parse_cli_args_supports_render_all_and_output_path() {
+        let args = vec![
+            "app".to_string(),
+            "--render-all".to_string(),
+            "test.mid".to_string(),
+            "out.wav".to_string(),
+        ];
+        let options = parse_cli_args(&args).expect("引数解析に失敗しました");
+
+        assert_eq!(options.playback_mode, PlaybackMode::RenderAll);
+        assert_eq!(options.input_path, "test.mid");
+        assert_eq!(options.output_path, Some("out.wav".to_string()));
+    }
+
+    #[test]
+    fn test_print_help_mentions_render_all() {
+        let help = help_text("app");
+        assert!(help.contains("使い方:"));
+        assert!(help.contains("--render-all"));
+        assert!(help.contains("--help, -h"));
     }
 }
