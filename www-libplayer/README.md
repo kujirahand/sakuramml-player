@@ -28,6 +28,39 @@ To use it from a CDN, import the ES module URL provided by your CDN.
 </script>
 ```
 
+Minimal CDN example:
+
+```html
+<textarea id="mml">テンポ120 ドレミファソラシド</textarea>
+<button id="play">Play</button>
+<button id="stop">Stop</button>
+<pre id="log"></pre>
+
+<script type="module">
+  import { SakuraPlayer } from 'https://cdn.jsdelivr.net/npm/sakuramml-libplayer@0.1.1/sakura-mml-player.js';
+
+  const player = new SakuraPlayer();
+  const mml = document.getElementById('mml');
+  const log = document.getElementById('log');
+
+  player.onEvent('compile', (event) => {
+    log.textContent = event.detail.log || 'compile ok';
+  });
+
+  document.getElementById('play').addEventListener('click', async () => {
+    await player.init();
+    if (!player.soundFontLoaded) {
+      await player.loadSoundFont('/fonts/TimGM6mb.sf2');
+    }
+    await player.play(mml.value);
+  });
+
+  document.getElementById('stop').addEventListener('click', () => {
+    player.stop();
+  });
+</script>
+```
+
 SoundFonts are not bundled with this package. Host a SoundFont yourself, or provide SoundFont bytes, and pass it to `loadSoundFont()`.
 
 ```js
