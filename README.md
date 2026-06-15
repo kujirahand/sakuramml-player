@@ -17,7 +17,7 @@
 - [プロジェクト構成](docs/project-structure.md)
 - [アーキテクチャ](docs/architecture.md)
 - [MIDI テキストイベントの知見](docs/midi.md)
-- [MML サウンドプレイヤーサンプル](docs/www-player-sample.md)
+- [MML サウンドプレイヤー / npm 配布](docs/www-libplayer.md)
 - [CLI 再生ノイズ調査メモ](docs/cli-audio-noise.md)
 - [CLI 再生まわりの学び](docs/cli-playback-lessons.md)
 
@@ -66,16 +66,16 @@ cargo run --bin sakuramml-player -- --help
 
 CLI 再生モードの設計判断や調査経緯は [docs/cli-audio-noise.md](docs/cli-audio-noise.md) と [docs/cli-playback-lessons.md](docs/cli-playback-lessons.md) にまとめています。
 
-### MML サウンドプレイヤーサンプル
+### MML サウンドプレイヤー / npm 配布
 
-ピアノロール描画を使わず、MML のコンパイルと音楽再生だけを行うサンプルを `www-player-sample/` に用意しています。ブラウザ版と同じ `www/pkg/` の WebAssembly を利用します。
+ピアノロール描画を使わず、MML のコンパイルと音楽再生だけを行うライブラリを `www-libplayer/` に用意しています。サンプルは `www-libplayer-sample/` にあります。
 
 ```bash
-./build.sh
+./build-libplayer.sh
 python3 -m http.server 8080
 ```
 
-`http://localhost:8080/www-player-sample/` を開くと、テキストボックスと再生、一時停止、停止ボタンだけの簡単なサンプルを試せます。
+`http://localhost:8080/www-libplayer-sample/` を開くと、テキストボックスと再生、一時停止、停止ボタンだけの簡単なサンプルを試せます。`www-libplayer/` は `npm publish` できるパッケージ構成です。
 
 ## 開発の前提
 

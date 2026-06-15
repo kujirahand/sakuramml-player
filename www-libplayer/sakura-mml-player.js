@@ -2,7 +2,7 @@ import init, {
   MidiPlayer,
   compile_mml,
   load_soundfont,
-} from '../www/pkg/sakuramml_player.js';
+} from './pkg/sakuramml_player.js';
 
 const DEFAULT_CHUNK_SEC = 5;
 const DEFAULT_BUFFER_AHEAD_SEC = 15;
@@ -11,7 +11,7 @@ const DEFAULT_SCHEDULE_LATENCY = 0.04;
 export class SakuraPlayer {
   constructor(options = {}) {
     this.sampleRate = options.sampleRate || 44100;
-    this.soundFontUrl = options.soundFontUrl || '../www/fonts/TimGM6mb.sf2';
+    this.soundFontUrl = options.soundFontUrl || null;
     this.chunkSeconds = options.chunkSeconds || DEFAULT_CHUNK_SEC;
     this.bufferAheadSeconds = options.bufferAheadSeconds || DEFAULT_BUFFER_AHEAD_SEC;
     this.scheduleLatency = options.scheduleLatency || DEFAULT_SCHEDULE_LATENCY;
@@ -59,6 +59,9 @@ export class SakuraPlayer {
 
   async loadSoundFont(source = this.soundFontUrl) {
     await this.init();
+    if (source == null) {
+      throw new Error('SoundFont の URL またはバイト列を loadSoundFont() に指定してください。');
+    }
     const data = await this.toUint8Array(source);
     try {
       load_soundfont(data);

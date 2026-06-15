@@ -112,7 +112,7 @@
   </main>
 
   <script type="module">
-    import { SakuraPlayer } from './sakura-mml-player.js';
+    import { SakuraPlayer } from '../www-libplayer/sakura-mml-player.js';
 
     const mml = document.getElementById('mml');
     const playButton = document.getElementById('play');
@@ -167,7 +167,7 @@
         playButton.disabled = true;
         setStatus('準備中...');
         if (!player.soundFontLoaded) {
-          await player.loadSoundFont();
+          await player.loadSoundFont('../www/fonts/TimGM6mb.sf2');
         }
         await player.play(mml.value);
       } catch (error) {

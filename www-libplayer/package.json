@@ -1,0 +1,30 @@
+{
+  "name": "sakuramml-libplayer",
+  "version": "0.1.0",
+  "description": "MML and MIDI sound player for browsers using SakuraMML WebAssembly.",
+  "type": "module",
+  "main": "./sakura-mml-player.js",
+  "module": "./sakura-mml-player.js",
+  "exports": {
+    ".": "./sakura-mml-player.js"
+  },
+  "files": [
+    "sakura-mml-player.js",
+    "pkg/",
+    "README.md",
+    "README-ja.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --check sakura-mml-player.js && node sakura-mml-player.test.mjs",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "sakuramml",
+    "mml",
+    "midi",
+    "webassembly",
+    "webaudio"
+  ],
+  "license": "MIT"
+}
