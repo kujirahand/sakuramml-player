@@ -12,19 +12,19 @@ import { SakuraPlayer } from 'sakuramml-libplayer';
 const player = new SakuraPlayer();
 await player.init();
 await player.loadSoundFont('/fonts/TimGM6mb.sf2');
-await player.play('テンポ120 ドレミファソラシド');
+await player.play('l8 cege cege cege c2');
 ```
 
 To use it from a CDN, import the ES module URL provided by your CDN.
 
 ```html
 <script type="module">
-  import { SakuraPlayer } from 'https://cdn.example.com/sakuramml-libplayer/sakura-mml-player.js';
+  import { SakuraPlayer } from 'https://cdn.jsdelivr.net/npm/sakuramml-libplayer@0.1.1/sakura-mml-player.js';
 
   const player = new SakuraPlayer();
   await player.init();
   await player.loadSoundFont('https://example.com/TimGM6mb.sf2');
-  await player.play('テンポ120 ドレミファソラシド');
+  await player.play('l8 ceg gede cege c2');
 </script>
 ```
 

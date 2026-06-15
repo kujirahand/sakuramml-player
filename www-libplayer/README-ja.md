@@ -17,7 +17,7 @@ CDN 経由で使う場合は、配信先の URL から ES module として読み
 
 ```html
 <script type="module">
-  import { SakuraPlayer } from 'https://cdn.example.com/sakuramml-libplayer/sakura-mml-player.js';
+  import { SakuraPlayer } from 'https://cdn.jsdelivr.net/npm/sakuramml-libplayer@0.1.1/sakura-mml-player.js';
 
   const player = new SakuraPlayer();
   await player.init();
